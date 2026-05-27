@@ -108,6 +108,13 @@ export type Statement =
       line: number
       nextLine?: number
     }
+  | {
+      kind: 'while'
+      condition: Expression
+      body: Statement[]
+      line: number
+      endLine?: number
+    }
 
 export type ParseResult = {
   statements: Statement[]

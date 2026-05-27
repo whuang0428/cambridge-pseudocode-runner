@@ -87,6 +87,11 @@ function executeStatement(statement: Statement, state: RuntimeState): void {
     return
   }
 
+  if (statement.kind === 'while') {
+    executeWhile(statement, state)
+    return
+  }
+
   executeFor(statement, state)
 }
 
@@ -248,6 +253,47 @@ function executeFor(statement: Extract<Statement, { kind: 'for' }>, state: Runti
 
     counter.value += step.value
   }
+}
+
+function executeWhile(statement: Extract<Statement, { kind: 'while' }>, state: RuntimeState): void {
+  while (true) {
+    if (!consumeExecutionStep(statement.line, state)) {
+      return
+    }
+
+    const condition = evaluateExpression(statement.condition, state.variables)
+    if (!condition.ok) {
+      state.errors.push(condition.error)
+      return
+    }
+
+    if (typeof condition.value !== 'boolean') {
+      state.errors.push(`Line ${statement.line}: WHILE condition must be BOOLEAN.`)
+      return
+    }
+
+    if (!condition.value) {
+      return
+    }
+
+    if (!hasExecutionStepsRemaining(statement.line, state)) {
+      return
+    }
+
+    executeStatements(statement.body, state)
+    if (state.errors.length > 0) {
+      return
+    }
+  }
+}
+
+function hasExecutionStepsRemaining(line: number, state: RuntimeState): boolean {
+  if (state.steps >= maxExecutionSteps) {
+    state.errors.push(`Line ${line}: Execution limit exceeded. Possible infinite loop.`)
+    return false
+  }
+
+  return true
 }
 
 function evaluateExpression(expression: Expression, variables: Map<string, StoredVariable>): EvaluationResult {

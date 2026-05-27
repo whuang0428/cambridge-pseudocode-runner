@@ -6,7 +6,7 @@ type SourceLine = {
   text: string
 }
 
-type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'EOF'
+type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'ENDWHILE' | 'EOF'
 
 const declarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
 const inputPattern = /^INPUT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
@@ -15,6 +15,7 @@ const assignmentPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s*(.+)$/
 const ifPattern = /^IF\s+(.+)\s+THEN$/i
 const nextPattern = /^NEXT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const forPattern = /^FOR\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s+(.+)$/i
+const whilePattern = /^WHILE\s+(.+)$/i
 
 export function parsePseudocode(code: string): ParseResult {
   const errors: string[] = []
@@ -49,6 +50,8 @@ class StatementParser {
         this.errors.push(`Line ${sourceLine.line}: ELSE without matching IF.`)
       } else if (upper === 'ENDIF') {
         this.errors.push(`Line ${sourceLine.line}: ENDIF without matching IF.`)
+      } else if (upper === 'ENDWHILE') {
+        this.errors.push(`Line ${sourceLine.line}: ENDWHILE without matching WHILE.`)
       } else if (/^NEXT\b/i.test(sourceLine.text)) {
         this.errors.push(`Line ${sourceLine.line}: NEXT without matching FOR.`)
       } else {
@@ -68,7 +71,7 @@ class StatementParser {
       const sourceLine = this.peek()
       const upper = sourceLine.text.toUpperCase()
 
-      if (upper === 'ELSE' || upper === 'ENDIF' || /^NEXT\b/i.test(sourceLine.text)) {
+      if (upper === 'ELSE' || upper === 'ENDIF' || upper === 'ENDWHILE' || /^NEXT\b/i.test(sourceLine.text)) {
         if (upper === 'ELSE' && stopTokens.includes('ELSE')) {
           return statements
         }
@@ -78,6 +81,10 @@ class StatementParser {
         }
 
         if (/^NEXT\b/i.test(sourceLine.text) && stopTokens.includes('NEXT')) {
+          return statements
+        }
+
+        if (upper === 'ENDWHILE' && stopTokens.includes('ENDWHILE')) {
           return statements
         }
 
@@ -143,6 +150,10 @@ class StatementParser {
 
     if (/^FOR\b/i.test(text)) {
       return this.parseForStatement()
+    }
+
+    if (/^WHILE\b/i.test(text)) {
+      return this.parseWhileStatement()
     }
 
     this.current += 1
@@ -254,6 +265,45 @@ class StatementParser {
           body,
           line: sourceLine.line,
           nextLine: nextLine.line,
+        }
+      : null
+  }
+
+  private parseWhileStatement(): Statement | null {
+    const sourceLine = this.peek()
+    const match = sourceLine.text.match(whilePattern)
+
+    if (!match || !match[1].trim()) {
+      this.errors.push(`Line ${sourceLine.line}: Invalid WHILE statement.`)
+      this.current += 1
+      return null
+    }
+
+    const condition = parseExpression(match[1], sourceLine.line, this.errors)
+    this.current += 1
+
+    const body = this.parseBlock(['ENDWHILE'])
+
+    if (this.isAtEnd()) {
+      this.errors.push(`Line ${sourceLine.line}: Missing ENDWHILE for WHILE statement.`)
+      return null
+    }
+
+    const endLine = this.peek()
+    if (endLine.text.toUpperCase() !== 'ENDWHILE') {
+      this.errors.push(`Line ${sourceLine.line}: Missing ENDWHILE for WHILE statement.`)
+      return null
+    }
+
+    this.current += 1
+
+    return condition
+      ? {
+          kind: 'while',
+          condition,
+          body,
+          line: sourceLine.line,
+          endLine: endLine.line,
         }
       : null
   }

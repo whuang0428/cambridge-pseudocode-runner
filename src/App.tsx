@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { runPseudocode } from './engine/runPseudocode'
 
-const defaultCode = `DECLARE I : INTEGER
+const defaultCode = `DECLARE Count : INTEGER
 DECLARE Total : INTEGER
 
+Count ← 1
 Total ← 0
 
-FOR I ← 1 TO 5
-    Total ← Total + I
-    OUTPUT "I=", I, " Total=", Total
-NEXT I
+WHILE Count <= 5
+    Total ← Total + Count
+    OUTPUT "Count=", Count, " Total=", Total
+    Count ← Count + 1
+ENDWHILE
 
 OUTPUT "Final total: ", Total`
 
@@ -109,7 +111,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 4 prototype. Supports FOR/NEXT loops, IF blocks, input, output, assignments, expressions, and boolean logic.
+        Phase 5 prototype. Supports WHILE loops, FOR loops, IF blocks, input, output, assignments, expressions, and boolean logic.
       </p>
     </main>
   )
