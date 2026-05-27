@@ -6,13 +6,15 @@ type SourceLine = {
   text: string
 }
 
-type StopToken = 'ELSE' | 'ENDIF' | 'EOF'
+type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'EOF'
 
 const declarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
 const inputPattern = /^INPUT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const outputPattern = /^OUTPUT(?:\s+(.+))?$/i
 const assignmentPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s*(.+)$/
 const ifPattern = /^IF\s+(.+)\s+THEN$/i
+const nextPattern = /^NEXT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
+const forPattern = /^FOR\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s+(.+)$/i
 
 export function parsePseudocode(code: string): ParseResult {
   const errors: string[] = []
@@ -47,6 +49,8 @@ class StatementParser {
         this.errors.push(`Line ${sourceLine.line}: ELSE without matching IF.`)
       } else if (upper === 'ENDIF') {
         this.errors.push(`Line ${sourceLine.line}: ENDIF without matching IF.`)
+      } else if (/^NEXT\b/i.test(sourceLine.text)) {
+        this.errors.push(`Line ${sourceLine.line}: NEXT without matching FOR.`)
       } else {
         this.errors.push(`Line ${sourceLine.line}: Syntax error.`)
       }
@@ -64,8 +68,16 @@ class StatementParser {
       const sourceLine = this.peek()
       const upper = sourceLine.text.toUpperCase()
 
-      if (upper === 'ELSE' || upper === 'ENDIF') {
-        if (stopTokens.includes(upper as StopToken)) {
+      if (upper === 'ELSE' || upper === 'ENDIF' || /^NEXT\b/i.test(sourceLine.text)) {
+        if (upper === 'ELSE' && stopTokens.includes('ELSE')) {
+          return statements
+        }
+
+        if (upper === 'ENDIF' && stopTokens.includes('ENDIF')) {
+          return statements
+        }
+
+        if (/^NEXT\b/i.test(sourceLine.text) && stopTokens.includes('NEXT')) {
           return statements
         }
 
@@ -129,6 +141,10 @@ class StatementParser {
       return this.parseIfStatement()
     }
 
+    if (/^FOR\b/i.test(text)) {
+      return this.parseForStatement()
+    }
+
     this.current += 1
     this.errors.push(`Line ${line}: Syntax error.`)
     return null
@@ -183,6 +199,65 @@ class StatementParser {
       : null
   }
 
+  private parseForStatement(): Statement | null {
+    const sourceLine = this.peek()
+    const match = sourceLine.text.match(forPattern)
+
+    if (!match) {
+      this.errors.push(`Line ${sourceLine.line}: Invalid FOR statement.`)
+      this.current += 1
+      return null
+    }
+
+    const counter = match[1]
+    const bounds = splitForBounds(match[2], sourceLine.line, this.errors)
+
+    if (!bounds) {
+      this.current += 1
+      return null
+    }
+
+    const start = parseExpression(bounds.start, sourceLine.line, this.errors)
+    const end = parseExpression(bounds.end, sourceLine.line, this.errors)
+    const parsedStep = bounds.step ? parseExpression(bounds.step, sourceLine.line, this.errors) : undefined
+    this.current += 1
+
+    const body = this.parseBlock(['NEXT'])
+
+    if (this.isAtEnd()) {
+      this.errors.push(`Line ${sourceLine.line}: Missing NEXT for FOR statement.`)
+      return null
+    }
+
+    const nextLine = this.peek()
+    const next = nextLine.text.match(nextPattern)
+
+    if (!next) {
+      this.errors.push(`Line ${nextLine.line}: Invalid NEXT statement.`)
+      return null
+    }
+
+    this.current += 1
+
+    if (next[1] !== counter) {
+      this.errors.push(`Line ${nextLine.line}: NEXT variable '${next[1]}' does not match FOR counter '${counter}'.`)
+      return null
+    }
+
+    return start && end && (bounds.step === undefined || parsedStep)
+      ? {
+          kind: 'for',
+          counter,
+          start,
+          end,
+          step: parsedStep ?? undefined,
+          body,
+          line: sourceLine.line,
+          nextLine: nextLine.line,
+        }
+      : null
+  }
+
   private peek(): SourceLine {
     return this.lines[this.current]
   }
@@ -190,6 +265,70 @@ class StatementParser {
   private isAtEnd(): boolean {
     return this.current >= this.lines.length
   }
+}
+
+function splitForBounds(
+  source: string,
+  line: number,
+  errors: string[],
+): { start: string; end: string; step?: string } | null {
+  const toIndex = findKeywordOutsideExpression(source, 'TO')
+
+  if (toIndex === -1) {
+    errors.push(`Line ${line}: FOR statement must use TO.`)
+    return null
+  }
+
+  const start = source.slice(0, toIndex).trim()
+  const afterTo = source.slice(toIndex + 2).trim()
+  const stepIndex = findKeywordOutsideExpression(afterTo, 'STEP')
+  const end = stepIndex === -1 ? afterTo.trim() : afterTo.slice(0, stepIndex).trim()
+  const step = stepIndex === -1 ? undefined : afterTo.slice(stepIndex + 4).trim()
+
+  if (!start || !end || step === '') {
+    errors.push(`Line ${line}: Invalid FOR statement.`)
+    return null
+  }
+
+  return { start, end, step }
+}
+
+function findKeywordOutsideExpression(source: string, keyword: 'TO' | 'STEP'): number {
+  let depth = 0
+  let inString = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+
+    if (inString) {
+      continue
+    }
+
+    if (char === '(') {
+      depth += 1
+      continue
+    }
+
+    if (char === ')') {
+      depth -= 1
+      continue
+    }
+
+    if (depth === 0 && source.slice(index, index + keyword.length).toUpperCase() === keyword) {
+      const before = source[index - 1] ?? ' '
+      const after = source[index + keyword.length] ?? ' '
+      if (!/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after)) {
+        return index
+      }
+    }
+  }
+
+  return -1
 }
 
 function splitOutputItems(source: string, line: number, errors: string[]): string[] {
@@ -341,6 +480,16 @@ class ExpressionParser {
       return {
         kind: 'unary',
         operator: 'NOT',
+        expression: this.parseUnary(),
+        line: operator.line,
+      }
+    }
+
+    if (this.matchOperator('-')) {
+      const operator = this.previous()
+      return {
+        kind: 'unary',
+        operator: '-',
         expression: this.parseUnary(),
         line: operator.line,
       }

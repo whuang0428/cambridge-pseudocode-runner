@@ -1,5 +1,7 @@
 import type { Expression, RuntimeValue, RunResult, Statement, VariableType } from './types'
 
+const maxExecutionSteps = 100000
+
 type StoredVariable = {
   type: VariableType
   value: RuntimeValue
@@ -11,6 +13,7 @@ type RuntimeState = {
   variables: Map<string, StoredVariable>
   inputLines: string[]
   inputIndex: number
+  steps: number
 }
 
 type EvaluationResult =
@@ -30,6 +33,7 @@ export function interpret(statements: Statement[], inputText = '', initialErrors
     variables: new Map<string, StoredVariable>(),
     inputLines: inputText.replace(/\r\n/g, '\n').split('\n'),
     inputIndex: 0,
+    steps: 0,
   }
 
   if (state.errors.length === 0) {
@@ -54,88 +58,118 @@ function executeStatements(statements: Statement[], state: RuntimeState): void {
 }
 
 function executeStatement(statement: Statement, state: RuntimeState): void {
-  if (statement.kind === 'declare') {
-    if (state.variables.has(statement.name)) {
-      state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
-      return
-    }
+  if (!consumeExecutionStep(statement.line, state)) {
+    return
+  }
 
-    state.variables.set(statement.name, {
-      type: statement.variableType,
-      value: defaultValue(statement.variableType),
-    })
+  if (statement.kind === 'declare') {
+    executeDeclaration(statement, state)
     return
   }
 
   if (statement.kind === 'input') {
-    const target = state.variables.get(statement.name)
-
-    if (!target) {
-      state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
-      return
-    }
-
-    if (state.inputIndex >= state.inputLines.length || (state.inputLines.length === 1 && state.inputLines[0] === '')) {
-      state.errors.push(`Line ${statement.line}: Not enough input values.`)
-      return
-    }
-
-    const rawInput = state.inputLines[state.inputIndex]
-    state.inputIndex += 1
-    const converted = convertInput(rawInput, target.type, statement.line)
-
-    if (!converted.ok) {
-      state.errors.push(converted.error)
-      return
-    }
-
-    target.value = converted.value
+    executeInput(statement, state)
     return
   }
 
   if (statement.kind === 'assign') {
-    const target = state.variables.get(statement.name)
+    executeAssignment(statement, state)
+    return
+  }
 
-    if (!target) {
-      state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
-      return
-    }
+  if (statement.kind === 'output') {
+    executeOutput(statement, state)
+    return
+  }
 
-    const evaluated = evaluateExpression(statement.expression, state.variables)
+  if (statement.kind === 'if') {
+    executeIf(statement, state)
+    return
+  }
+
+  executeFor(statement, state)
+}
+
+function executeDeclaration(statement: Extract<Statement, { kind: 'declare' }>, state: RuntimeState): void {
+  if (state.variables.has(statement.name)) {
+    state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
+    return
+  }
+
+  state.variables.set(statement.name, {
+    type: statement.variableType,
+    value: defaultValue(statement.variableType),
+  })
+}
+
+function executeInput(statement: Extract<Statement, { kind: 'input' }>, state: RuntimeState): void {
+  const target = state.variables.get(statement.name)
+
+  if (!target) {
+    state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+    return
+  }
+
+  if (state.inputIndex >= state.inputLines.length || (state.inputLines.length === 1 && state.inputLines[0] === '')) {
+    state.errors.push(`Line ${statement.line}: Not enough input values.`)
+    return
+  }
+
+  const rawInput = state.inputLines[state.inputIndex]
+  state.inputIndex += 1
+  const converted = convertInput(rawInput, target.type, statement.line)
+
+  if (!converted.ok) {
+    state.errors.push(converted.error)
+    return
+  }
+
+  target.value = converted.value
+}
+
+function executeAssignment(statement: Extract<Statement, { kind: 'assign' }>, state: RuntimeState): void {
+  const target = state.variables.get(statement.name)
+
+  if (!target) {
+    state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+    return
+  }
+
+  const evaluated = evaluateExpression(statement.expression, state.variables)
+  if (!evaluated.ok) {
+    state.errors.push(evaluated.error)
+    return
+  }
+
+  if (!canAssign(target.type, evaluated.value)) {
+    state.errors.push(
+      `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${statement.name}'.`,
+    )
+    return
+  }
+
+  target.value = evaluated.value
+}
+
+function executeOutput(statement: Extract<Statement, { kind: 'output' }>, state: RuntimeState): void {
+  const values: RuntimeValue[] = []
+
+  for (const expression of statement.expressions) {
+    const evaluated = evaluateExpression(expression, state.variables)
     if (!evaluated.ok) {
       state.errors.push(evaluated.error)
       return
     }
 
-    if (!canAssign(target.type, evaluated.value)) {
-      state.errors.push(
-        `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${statement.name}'.`,
-      )
-      return
-    }
-
-    target.value = evaluated.value
-    return
+    values.push(evaluated.value)
   }
 
-  if (statement.kind === 'output') {
-    const values: RuntimeValue[] = []
+  state.output.push(values.map(formatValue).join(''))
+}
 
-    for (const expression of statement.expressions) {
-      const evaluated = evaluateExpression(expression, state.variables)
-      if (!evaluated.ok) {
-        state.errors.push(evaluated.error)
-        return
-      }
-
-      values.push(evaluated.value)
-    }
-
-    state.output.push(values.map(formatValue).join(''))
-    return
-  }
-
+function executeIf(statement: Extract<Statement, { kind: 'if' }>, state: RuntimeState): void {
   const condition = evaluateExpression(statement.condition, state.variables)
+
   if (!condition.ok) {
     state.errors.push(condition.error)
     return
@@ -147,6 +181,73 @@ function executeStatement(statement: Statement, state: RuntimeState): void {
   }
 
   executeStatements(condition.value ? statement.thenBranch : (statement.elseBranch ?? []), state)
+}
+
+function executeFor(statement: Extract<Statement, { kind: 'for' }>, state: RuntimeState): void {
+  const counter = state.variables.get(statement.counter)
+
+  if (!counter) {
+    state.errors.push(`Line ${statement.line}: Variable '${statement.counter}' has not been declared.`)
+    return
+  }
+
+  if (counter.type !== 'INTEGER') {
+    state.errors.push(`Line ${statement.line}: FOR counter variable '${statement.counter}' must be INTEGER.`)
+    return
+  }
+
+  const start = evaluateExpression(statement.start, state.variables)
+  if (!start.ok) {
+    state.errors.push(start.error)
+    return
+  }
+
+  if (!isIntegerValue(start.value)) {
+    state.errors.push(`Line ${statement.line}: FOR start value must be INTEGER.`)
+    return
+  }
+
+  const end = evaluateExpression(statement.end, state.variables)
+  if (!end.ok) {
+    state.errors.push(end.error)
+    return
+  }
+
+  if (!isIntegerValue(end.value)) {
+    state.errors.push(`Line ${statement.line}: FOR end value must be INTEGER.`)
+    return
+  }
+
+  const step = statement.step ? evaluateExpression(statement.step, state.variables) : ({ ok: true, value: 1 } as const)
+  if (!step.ok) {
+    state.errors.push(step.error)
+    return
+  }
+
+  if (!isIntegerValue(step.value)) {
+    state.errors.push(`Line ${statement.line}: FOR step value must be INTEGER.`)
+    return
+  }
+
+  if (step.value === 0) {
+    state.errors.push(`Line ${statement.line}: FOR step cannot be 0.`)
+    return
+  }
+
+  counter.value = start.value
+
+  while (step.value > 0 ? counter.value <= end.value : counter.value >= end.value) {
+    if (!consumeExecutionStep(statement.line, state)) {
+      return
+    }
+
+    executeStatements(statement.body, state)
+    if (state.errors.length > 0) {
+      return
+    }
+
+    counter.value += step.value
+  }
 }
 
 function evaluateExpression(expression: Expression, variables: Map<string, StoredVariable>): EvaluationResult {
@@ -171,6 +272,17 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
     const value = evaluateExpression(expression.expression, variables)
     if (!value.ok) {
       return value
+    }
+
+    if (expression.operator === '-') {
+      if (typeof value.value === 'number') {
+        return { ok: true, value: -value.value }
+      }
+
+      return {
+        ok: false,
+        error: `Line ${expression.line}: Operator '-' cannot be used with ${valueType(value.value)}.`,
+      }
     }
 
     if (typeof value.value !== 'boolean') {
@@ -297,6 +409,17 @@ function compareValues(
   }
 }
 
+function consumeExecutionStep(line: number, state: RuntimeState): boolean {
+  state.steps += 1
+
+  if (state.steps > maxExecutionSteps) {
+    state.errors.push(`Line ${line}: Execution limit exceeded. Possible infinite loop.`)
+    return false
+  }
+
+  return true
+}
+
 function convertInput(rawInput: string, type: VariableType, line: number): EvaluationResult {
   const text = rawInput.trim()
 
@@ -363,6 +486,10 @@ function canAssign(type: VariableType, value: RuntimeValue): boolean {
 
 function isComparisonOperator(operator: string): operator is '=' | '<>' | '<' | '<=' | '>' | '>=' {
   return operator === '=' || operator === '<>' || operator === '<' || operator === '<=' || operator === '>' || operator === '>='
+}
+
+function isIntegerValue(value: RuntimeValue): value is number {
+  return typeof value === 'number' && Number.isInteger(value)
 }
 
 function valueType(value: RuntimeValue): VariableType {

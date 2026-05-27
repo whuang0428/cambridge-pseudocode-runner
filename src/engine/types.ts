@@ -24,7 +24,7 @@ export type BinaryOperator =
   | 'AND'
   | 'OR'
 
-export type UnaryOperator = 'NOT'
+export type UnaryOperator = 'NOT' | '-'
 
 export type TokenType =
   | 'number'
@@ -97,6 +97,16 @@ export type Statement =
       thenBranch: Statement[]
       elseBranch?: Statement[]
       line: number
+    }
+  | {
+      kind: 'for'
+      counter: string
+      start: Expression
+      end: Expression
+      step?: Expression
+      body: Statement[]
+      line: number
+      nextLine?: number
     }
 
 export type ParseResult = {
