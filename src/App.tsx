@@ -7,11 +7,11 @@ DECLARE Total : INTEGER
 Count ← 1
 Total ← 0
 
-WHILE Count <= 5
+REPEAT
     Total ← Total + Count
     OUTPUT "Count=", Count, " Total=", Total
     Count ← Count + 1
-ENDWHILE
+UNTIL Count > 5
 
 OUTPUT "Final total: ", Total`
 
@@ -111,7 +111,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 5 prototype. Supports WHILE loops, FOR loops, IF blocks, input, output, assignments, expressions, and boolean logic.
+        Phase 6 prototype. Supports REPEAT/UNTIL loops, WHILE loops, FOR loops, IF blocks, input, output, assignments, expressions, and boolean logic.
       </p>
     </main>
   )

@@ -115,6 +115,13 @@ export type Statement =
       line: number
       endLine?: number
     }
+  | {
+      kind: 'repeat'
+      body: Statement[]
+      untilCondition: Expression
+      line: number
+      untilLine: number
+    }
 
 export type ParseResult = {
   statements: Statement[]

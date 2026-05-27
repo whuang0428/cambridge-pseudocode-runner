@@ -6,7 +6,7 @@ type SourceLine = {
   text: string
 }
 
-type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'ENDWHILE' | 'EOF'
+type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'ENDWHILE' | 'UNTIL' | 'EOF'
 
 const declarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
 const inputPattern = /^INPUT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
@@ -16,6 +16,7 @@ const ifPattern = /^IF\s+(.+)\s+THEN$/i
 const nextPattern = /^NEXT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const forPattern = /^FOR\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s+(.+)$/i
 const whilePattern = /^WHILE\s+(.+)$/i
+const untilPattern = /^UNTIL\s+(.+)$/i
 
 export function parsePseudocode(code: string): ParseResult {
   const errors: string[] = []
@@ -52,6 +53,8 @@ class StatementParser {
         this.errors.push(`Line ${sourceLine.line}: ENDIF without matching IF.`)
       } else if (upper === 'ENDWHILE') {
         this.errors.push(`Line ${sourceLine.line}: ENDWHILE without matching WHILE.`)
+      } else if (/^UNTIL\b/i.test(sourceLine.text)) {
+        this.errors.push(`Line ${sourceLine.line}: UNTIL without matching REPEAT.`)
       } else if (/^NEXT\b/i.test(sourceLine.text)) {
         this.errors.push(`Line ${sourceLine.line}: NEXT without matching FOR.`)
       } else {
@@ -71,7 +74,13 @@ class StatementParser {
       const sourceLine = this.peek()
       const upper = sourceLine.text.toUpperCase()
 
-      if (upper === 'ELSE' || upper === 'ENDIF' || upper === 'ENDWHILE' || /^NEXT\b/i.test(sourceLine.text)) {
+      if (
+        upper === 'ELSE' ||
+        upper === 'ENDIF' ||
+        upper === 'ENDWHILE' ||
+        /^NEXT\b/i.test(sourceLine.text) ||
+        /^UNTIL\b/i.test(sourceLine.text)
+      ) {
         if (upper === 'ELSE' && stopTokens.includes('ELSE')) {
           return statements
         }
@@ -85,6 +94,10 @@ class StatementParser {
         }
 
         if (upper === 'ENDWHILE' && stopTokens.includes('ENDWHILE')) {
+          return statements
+        }
+
+        if (/^UNTIL\b/i.test(sourceLine.text) && stopTokens.includes('UNTIL')) {
           return statements
         }
 
@@ -154,6 +167,16 @@ class StatementParser {
 
     if (/^WHILE\b/i.test(text)) {
       return this.parseWhileStatement()
+    }
+
+    if (/^REPEAT$/i.test(text)) {
+      return this.parseRepeatStatement()
+    }
+
+    if (/^REPEAT\b/i.test(text)) {
+      this.current += 1
+      this.errors.push(`Line ${line}: Syntax error.`)
+      return null
     }
 
     this.current += 1
@@ -304,6 +327,39 @@ class StatementParser {
           body,
           line: sourceLine.line,
           endLine: endLine.line,
+        }
+      : null
+  }
+
+  private parseRepeatStatement(): Statement | null {
+    const sourceLine = this.peek()
+    this.current += 1
+
+    const body = this.parseBlock(['UNTIL'])
+
+    if (this.isAtEnd()) {
+      this.errors.push(`Line ${sourceLine.line}: Missing UNTIL for REPEAT statement.`)
+      return null
+    }
+
+    const untilLine = this.peek()
+    const until = untilLine.text.match(untilPattern)
+    this.current += 1
+
+    if (!until || !until[1].trim()) {
+      this.errors.push(`Line ${untilLine.line}: Invalid UNTIL statement.`)
+      return null
+    }
+
+    const untilCondition = parseExpression(until[1], untilLine.line, this.errors)
+
+    return untilCondition
+      ? {
+          kind: 'repeat',
+          body,
+          untilCondition,
+          line: sourceLine.line,
+          untilLine: untilLine.line,
         }
       : null
   }

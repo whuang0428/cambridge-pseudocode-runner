@@ -92,6 +92,11 @@ function executeStatement(statement: Statement, state: RuntimeState): void {
     return
   }
 
+  if (statement.kind === 'repeat') {
+    executeRepeat(statement, state)
+    return
+  }
+
   executeFor(statement, state)
 }
 
@@ -282,6 +287,38 @@ function executeWhile(statement: Extract<Statement, { kind: 'while' }>, state: R
 
     executeStatements(statement.body, state)
     if (state.errors.length > 0) {
+      return
+    }
+  }
+}
+
+function executeRepeat(statement: Extract<Statement, { kind: 'repeat' }>, state: RuntimeState): void {
+  while (true) {
+    if (!hasExecutionStepsRemaining(statement.line, state)) {
+      return
+    }
+
+    executeStatements(statement.body, state)
+    if (state.errors.length > 0) {
+      return
+    }
+
+    if (!consumeExecutionStep(statement.line, state)) {
+      return
+    }
+
+    const condition = evaluateExpression(statement.untilCondition, state.variables)
+    if (!condition.ok) {
+      state.errors.push(condition.error)
+      return
+    }
+
+    if (typeof condition.value !== 'boolean') {
+      state.errors.push(`Line ${statement.untilLine}: UNTIL condition must be BOOLEAN.`)
+      return
+    }
+
+    if (condition.value) {
       return
     }
   }
