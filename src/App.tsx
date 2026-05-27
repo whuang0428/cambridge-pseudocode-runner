@@ -1,19 +1,20 @@
 import { useState } from 'react'
 import { runPseudocode } from './engine/runPseudocode'
 
-const defaultCode = `DECLARE A : INTEGER
-DECLARE B : INTEGER
-DECLARE Total : INTEGER
-INPUT A
-INPUT B
-Total ← A + B
-OUTPUT "The total is ", Total
-OUTPUT "A is greater than B: ", A > B
-OUTPUT "A DIV B = ", A DIV B
-OUTPUT "A MOD B = ", A MOD B`
+const defaultCode = `DECLARE Score : INTEGER
+INPUT Score
 
-const defaultInput = `17
-5`
+IF Score >= 80 THEN
+    OUTPUT "High pass"
+ELSE
+    IF Score >= 50 THEN
+        OUTPUT "Pass"
+    ELSE
+        OUTPUT "Fail"
+    ENDIF
+ENDIF`
+
+const defaultInput = '75'
 
 type Mode = 'igcse' | 'alevel'
 
@@ -109,7 +110,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 2 prototype. Supports INPUT, OUTPUT, assignments, expressions, comparisons, and boolean logic.
+        Phase 3 prototype. Supports IF, ELSE, ENDIF, input, output, assignments, expressions, and boolean logic.
       </p>
     </main>
   )

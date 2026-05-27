@@ -5,6 +5,14 @@ type StoredVariable = {
   value: RuntimeValue
 }
 
+type RuntimeState = {
+  output: string[]
+  errors: string[]
+  variables: Map<string, StoredVariable>
+  inputLines: string[]
+  inputIndex: number
+}
+
 type EvaluationResult =
   | {
       ok: true
@@ -16,101 +24,129 @@ type EvaluationResult =
     }
 
 export function interpret(statements: Statement[], inputText = '', initialErrors: string[] = []): RunResult {
-  const output: string[] = []
-  const errors = [...initialErrors]
-  const variables = new Map<string, StoredVariable>()
-  const inputLines = inputText.replace(/\r\n/g, '\n').split('\n')
-  let inputIndex = 0
-
-  if (errors.length > 0) {
-    return { output, errors, variables: toPublicVariables(variables) }
+  const state: RuntimeState = {
+    output: [],
+    errors: [...initialErrors],
+    variables: new Map<string, StoredVariable>(),
+    inputLines: inputText.replace(/\r\n/g, '\n').split('\n'),
+    inputIndex: 0,
   }
 
+  if (state.errors.length === 0) {
+    executeStatements(statements, state)
+  }
+
+  return {
+    output: state.output,
+    errors: state.errors,
+    variables: toPublicVariables(state.variables),
+  }
+}
+
+function executeStatements(statements: Statement[], state: RuntimeState): void {
   for (const statement of statements) {
-    if (statement.kind === 'declare') {
-      if (variables.has(statement.name)) {
-        errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
-        break
-      }
+    executeStatement(statement, state)
 
-      variables.set(statement.name, {
-        type: statement.variableType,
-        value: defaultValue(statement.variableType),
-      })
-      continue
+    if (state.errors.length > 0) {
+      return
+    }
+  }
+}
+
+function executeStatement(statement: Statement, state: RuntimeState): void {
+  if (statement.kind === 'declare') {
+    if (state.variables.has(statement.name)) {
+      state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
+      return
     }
 
-    if (statement.kind === 'input') {
-      const target = variables.get(statement.name)
+    state.variables.set(statement.name, {
+      type: statement.variableType,
+      value: defaultValue(statement.variableType),
+    })
+    return
+  }
 
-      if (!target) {
-        errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
-        break
-      }
+  if (statement.kind === 'input') {
+    const target = state.variables.get(statement.name)
 
-      if (inputIndex >= inputLines.length || (inputLines.length === 1 && inputLines[0] === '')) {
-        errors.push(`Line ${statement.line}: Not enough input values.`)
-        break
-      }
-
-      const rawInput = inputLines[inputIndex]
-      inputIndex += 1
-      const converted = convertInput(rawInput, target.type, statement.line)
-
-      if (!converted.ok) {
-        errors.push(converted.error)
-        break
-      }
-
-      target.value = converted.value
-      continue
+    if (!target) {
+      state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+      return
     }
 
-    if (statement.kind === 'assign') {
-      const target = variables.get(statement.name)
-
-      if (!target) {
-        errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
-        break
-      }
-
-      const evaluated = evaluateExpression(statement.expression, variables)
-      if (!evaluated.ok) {
-        errors.push(evaluated.error)
-        break
-      }
-
-      if (!canAssign(target.type, evaluated.value)) {
-        errors.push(
-          `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${statement.name}'.`,
-        )
-        break
-      }
-
-      target.value = evaluated.value
-      continue
+    if (state.inputIndex >= state.inputLines.length || (state.inputLines.length === 1 && state.inputLines[0] === '')) {
+      state.errors.push(`Line ${statement.line}: Not enough input values.`)
+      return
     }
 
+    const rawInput = state.inputLines[state.inputIndex]
+    state.inputIndex += 1
+    const converted = convertInput(rawInput, target.type, statement.line)
+
+    if (!converted.ok) {
+      state.errors.push(converted.error)
+      return
+    }
+
+    target.value = converted.value
+    return
+  }
+
+  if (statement.kind === 'assign') {
+    const target = state.variables.get(statement.name)
+
+    if (!target) {
+      state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+      return
+    }
+
+    const evaluated = evaluateExpression(statement.expression, state.variables)
+    if (!evaluated.ok) {
+      state.errors.push(evaluated.error)
+      return
+    }
+
+    if (!canAssign(target.type, evaluated.value)) {
+      state.errors.push(
+        `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${statement.name}'.`,
+      )
+      return
+    }
+
+    target.value = evaluated.value
+    return
+  }
+
+  if (statement.kind === 'output') {
     const values: RuntimeValue[] = []
 
     for (const expression of statement.expressions) {
-      const evaluated = evaluateExpression(expression, variables)
+      const evaluated = evaluateExpression(expression, state.variables)
       if (!evaluated.ok) {
-        errors.push(evaluated.error)
-        break
+        state.errors.push(evaluated.error)
+        return
       }
 
       values.push(evaluated.value)
     }
 
-    if (values.length === statement.expressions.length) {
-      output.push(values.map(formatValue).join(''))
-    } else {
-      break
-    }
+    state.output.push(values.map(formatValue).join(''))
+    return
   }
 
-  return { output, errors, variables: toPublicVariables(variables) }
+  const condition = evaluateExpression(statement.condition, state.variables)
+  if (!condition.ok) {
+    state.errors.push(condition.error)
+    return
+  }
+
+  if (typeof condition.value !== 'boolean') {
+    state.errors.push(`Line ${statement.line}: IF condition must be BOOLEAN.`)
+    return
+  }
+
+  executeStatements(condition.value ? statement.thenBranch : (statement.elseBranch ?? []), state)
 }
 
 function evaluateExpression(expression: Expression, variables: Map<string, StoredVariable>): EvaluationResult {

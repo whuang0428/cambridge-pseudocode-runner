@@ -1,71 +1,195 @@
 import { tokenizeExpression } from './tokenizer'
 import type { BinaryOperator, Expression, ParseResult, Statement, Token, VariableType } from './types'
 
+type SourceLine = {
+  line: number
+  text: string
+}
+
+type StopToken = 'ELSE' | 'ENDIF' | 'EOF'
+
 const declarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
 const inputPattern = /^INPUT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const outputPattern = /^OUTPUT(?:\s+(.+))?$/i
 const assignmentPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s*(.+)$/
+const ifPattern = /^IF\s+(.+)\s+THEN$/i
 
 export function parsePseudocode(code: string): ParseResult {
-  const statements: Statement[] = []
   const errors: string[] = []
-  const lines = code.replace(/\r\n/g, '\n').split('\n')
+  const lines = code
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((rawLine, index) => ({ line: index + 1, text: rawLine.trim() }))
+    .filter((sourceLine) => sourceLine.text.length > 0)
 
-  lines.forEach((rawLine, index) => {
-    const line = index + 1
-    const text = rawLine.trim()
+  const parser = new StatementParser(lines, errors)
+  const statements = parser.parseProgram()
 
-    if (!text) {
-      return
+  return { statements, errors }
+}
+
+class StatementParser {
+  private current = 0
+
+  constructor(
+    private readonly lines: SourceLine[],
+    private readonly errors: string[],
+  ) {}
+
+  parseProgram(): Statement[] {
+    const statements = this.parseBlock([])
+
+    while (!this.isAtEnd()) {
+      const sourceLine = this.peek()
+      const upper = sourceLine.text.toUpperCase()
+
+      if (upper === 'ELSE') {
+        this.errors.push(`Line ${sourceLine.line}: ELSE without matching IF.`)
+      } else if (upper === 'ENDIF') {
+        this.errors.push(`Line ${sourceLine.line}: ENDIF without matching IF.`)
+      } else {
+        this.errors.push(`Line ${sourceLine.line}: Syntax error.`)
+      }
+
+      this.current += 1
     }
+
+    return statements
+  }
+
+  private parseBlock(stopTokens: StopToken[]): Statement[] {
+    const statements: Statement[] = []
+
+    while (!this.isAtEnd()) {
+      const sourceLine = this.peek()
+      const upper = sourceLine.text.toUpperCase()
+
+      if (upper === 'ELSE' || upper === 'ENDIF') {
+        if (stopTokens.includes(upper as StopToken)) {
+          return statements
+        }
+
+        return statements
+      }
+
+      const statement = this.parseStatement()
+      if (statement) {
+        statements.push(statement)
+      }
+    }
+
+    return statements
+  }
+
+  private parseStatement(): Statement | null {
+    const sourceLine = this.peek()
+    const { line, text } = sourceLine
 
     const declaration = text.match(declarationPattern)
     if (declaration) {
-      statements.push({
+      this.current += 1
+      return {
         kind: 'declare',
         name: declaration[1],
         variableType: declaration[2].toUpperCase() as VariableType,
         line,
-      })
-      return
+      }
     }
 
     const input = text.match(inputPattern)
     if (input) {
-      statements.push({ kind: 'input', name: input[1], line })
-      return
+      this.current += 1
+      return { kind: 'input', name: input[1], line }
     }
 
     const output = text.match(outputPattern)
     if (output) {
+      this.current += 1
+
       if (!output[1]?.trim()) {
-        errors.push(`Line ${line}: Invalid OUTPUT statement.`)
-        return
+        this.errors.push(`Line ${line}: Invalid OUTPUT statement.`)
+        return null
       }
 
-      const expressions = splitOutputItems(output[1], line, errors)
-        .map((item) => parseExpression(item, line, errors))
+      const expressions = splitOutputItems(output[1], line, this.errors)
+        .map((item) => parseExpression(item, line, this.errors))
         .filter((expression): expression is Expression => expression !== null)
 
-      if (expressions.length > 0) {
-        statements.push({ kind: 'output', expressions, line })
-      }
-      return
+      return expressions.length > 0 ? { kind: 'output', expressions, line } : null
     }
 
     const assignment = text.match(assignmentPattern)
     if (assignment) {
-      const expression = parseExpression(assignment[2], line, errors)
-      if (expression) {
-        statements.push({ kind: 'assign', name: assignment[1], expression, line })
-      }
-      return
+      this.current += 1
+      const expression = parseExpression(assignment[2], line, this.errors)
+      return expression ? { kind: 'assign', name: assignment[1], expression, line } : null
     }
 
-    errors.push(`Line ${line}: Syntax error.`)
-  })
+    if (/^IF\b/i.test(text)) {
+      return this.parseIfStatement()
+    }
 
-  return { statements, errors }
+    this.current += 1
+    this.errors.push(`Line ${line}: Syntax error.`)
+    return null
+  }
+
+  private parseIfStatement(): Statement | null {
+    const sourceLine = this.peek()
+    const match = sourceLine.text.match(ifPattern)
+
+    if (!match) {
+      this.errors.push(`Line ${sourceLine.line}: IF statement must end with THEN.`)
+      this.current += 1
+      return null
+    }
+
+    const condition = parseExpression(match[1], sourceLine.line, this.errors)
+    this.current += 1
+
+    const thenBranch = this.parseBlock(['ELSE', 'ENDIF'])
+    let elseBranch: Statement[] | undefined
+
+    if (this.isAtEnd()) {
+      this.errors.push(`Line ${sourceLine.line}: Missing ENDIF for IF statement.`)
+      return null
+    }
+
+    if (this.peek().text.toUpperCase() === 'ELSE') {
+      this.current += 1
+      elseBranch = this.parseBlock(['ENDIF'])
+
+      if (this.isAtEnd()) {
+        this.errors.push(`Line ${sourceLine.line}: Missing ENDIF for IF statement.`)
+        return null
+      }
+    }
+
+    if (this.peek().text.toUpperCase() !== 'ENDIF') {
+      this.errors.push(`Line ${sourceLine.line}: Missing ENDIF for IF statement.`)
+      return null
+    }
+
+    this.current += 1
+
+    return condition
+      ? {
+          kind: 'if',
+          condition,
+          thenBranch,
+          elseBranch,
+          line: sourceLine.line,
+        }
+      : null
+  }
+
+  private peek(): SourceLine {
+    return this.lines[this.current]
+  }
+
+  private isAtEnd(): boolean {
+    return this.current >= this.lines.length
+  }
 }
 
 function splitOutputItems(source: string, line: number, errors: string[]): string[] {

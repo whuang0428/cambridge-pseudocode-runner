@@ -91,6 +91,13 @@ export type Statement =
       expressions: Expression[]
       line: number
     }
+  | {
+      kind: 'if'
+      condition: Expression
+      thenBranch: Statement[]
+      elseBranch?: Statement[]
+      line: number
+    }
 
 export type ParseResult = {
   statements: Statement[]
