@@ -1,25 +1,29 @@
 import { useState } from 'react'
 import { runPseudocode } from './engine/runPseudocode'
 
-const defaultCode = `DECLARE Scores : ARRAY[1:5] OF INTEGER
-DECLARE I : INTEGER
+const defaultCode = `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
+DECLARE Row : INTEGER
+DECLARE Col : INTEGER
 DECLARE Total : INTEGER
 
 Total ← 0
 
-FOR I ← 1 TO 5
-    INPUT Scores[I]
-    Total ← Total + Scores[I]
-NEXT I
+FOR Row ← 1 TO 2
+    FOR Col ← 1 TO 3
+        INPUT Grid[Row, Col]
+        Total ← Total + Grid[Row, Col]
+    NEXT Col
+NEXT Row
 
 OUTPUT "Total: ", Total
-OUTPUT "Average: ", Total / 5`
+OUTPUT "Average: ", Total / 6`
 
-const defaultInput = `80
-65
-90
-72
-88`
+const defaultInput = `10
+20
+30
+40
+50
+60`
 
 type Mode = 'igcse' | 'alevel'
 
@@ -115,7 +119,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 7 prototype. Supports one-dimensional arrays, loops, IF blocks, input, output, assignments, expressions, and boolean logic.
+        Phase 8 prototype. Supports one- and two-dimensional arrays, loops, IF blocks, input, output, assignments, expressions, and boolean logic.
       </p>
     </main>
   )

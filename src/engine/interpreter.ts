@@ -11,9 +11,11 @@ type ScalarVariable = {
 type ArrayVariable = {
   kind: 'array'
   elementType: VariableType
-  lowerBound: number
-  upperBound: number
-  values: Map<number, RuntimeValue>
+  bounds: Array<{
+    lower: number
+    upper: number
+  }>
+  values: Map<string, RuntimeValue>
 }
 
 type StoredVariable = ScalarVariable | ArrayVariable
@@ -145,16 +147,26 @@ function executeArrayDeclaration(statement: Extract<Statement, { kind: 'declareA
     return
   }
 
-  const values = new Map<number, RuntimeValue>()
-  for (let index = statement.lowerBound; index <= statement.upperBound; index += 1) {
-    values.set(index, defaultValue(statement.elementType))
+  const values = new Map<string, RuntimeValue>()
+
+  if (statement.bounds.length === 1) {
+    const [bound] = statement.bounds
+    for (let index = bound.lower; index <= bound.upper; index += 1) {
+      values.set(String(index), defaultValue(statement.elementType))
+    }
+  } else {
+    const [rowBound, columnBound] = statement.bounds
+    for (let row = rowBound.lower; row <= rowBound.upper; row += 1) {
+      for (let column = columnBound.lower; column <= columnBound.upper; column += 1) {
+        values.set(arrayKey([row, column]), defaultValue(statement.elementType))
+      }
+    }
   }
 
   state.variables.set(statement.name, {
     kind: 'array',
     elementType: statement.elementType,
-    lowerBound: statement.lowerBound,
-    upperBound: statement.upperBound,
+    bounds: statement.bounds,
     values,
   })
 }
@@ -384,20 +396,21 @@ function resolveTarget(target: AssignmentTarget, variables: Map<string, StoredVa
     return { ok: false, error: `Line ${target.line}: Variable '${target.name}' is not an array.` }
   }
 
-  const index = evaluateIndex(target.index, variables)
-  if (!index.ok) return index
+  const indices = evaluateIndices(target.indices, variables)
+  if (!indices.ok) return indices
 
-  const bounds = checkArrayBounds(target.name, variable, index.value, target.line)
+  const bounds = checkArrayAccess(target.name, variable, indices.value, target.line)
   if (!bounds.ok) return bounds
+  const key = arrayKey(indices.value)
 
   return {
     ok: true,
-    name: `${target.name}[${index.value}]`,
+    name: `${target.name}[${indices.value.join(',')}]`,
     type: variable.elementType,
-    value: variable.values.get(index.value)!,
+    value: variable.values.get(key)!,
     arrayName: target.name,
     setValue: (value) => {
-      variable.values.set(index.value, value)
+      variable.values.set(key, value)
     },
   }
 }
@@ -432,13 +445,13 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
       return { ok: false, error: `Line ${expression.line}: Variable '${expression.name}' is not an array.` }
     }
 
-    const index = evaluateIndex(expression.index, variables)
-    if (!index.ok) return index
+    const indices = evaluateIndices(expression.indices, variables)
+    if (!indices.ok) return indices
 
-    const bounds = checkArrayBounds(expression.name, variable, index.value, expression.line)
+    const bounds = checkArrayAccess(expression.name, variable, indices.value, expression.line)
     if (!bounds.ok) return bounds
 
-    return { ok: true, value: variable.values.get(index.value)! }
+    return { ok: true, value: variable.values.get(arrayKey(indices.value))! }
   }
 
   if (expression.kind === 'unary') {
@@ -508,31 +521,74 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
   }
 }
 
-function evaluateIndex(expression: Expression, variables: Map<string, StoredVariable>): { ok: true; value: number } | { ok: false; error: string } {
-  const index = evaluateExpression(expression, variables)
-  if (!index.ok) return index
+function evaluateIndices(
+  expressions: Expression[],
+  variables: Map<string, StoredVariable>,
+): { ok: true; value: number[] } | { ok: false; error: string } {
+  const indices: number[] = []
 
-  if (!isIntegerValue(index.value)) {
-    return { ok: false, error: `Line ${expression.line}: Array index must be INTEGER.` }
+  for (const expression of expressions) {
+    const index = evaluateExpression(expression, variables)
+    if (!index.ok) return index
+
+    if (!isIntegerValue(index.value)) {
+      return { ok: false, error: `Line ${expression.line}: Array index must be INTEGER.` }
+    }
+
+    indices.push(index.value)
   }
 
-  return { ok: true, value: index.value }
+  return { ok: true, value: indices }
 }
 
-function checkArrayBounds(
+function checkArrayAccess(
   name: string,
   variable: ArrayVariable,
-  index: number,
+  indices: number[],
   line: number,
 ): { ok: true } | { ok: false; error: string } {
-  if (index < variable.lowerBound || index > variable.upperBound) {
+  if (indices.length !== variable.bounds.length) {
     return {
       ok: false,
-      error: `Line ${line}: Array index ${index} out of bounds for '${name}'. Valid range is ${variable.lowerBound} to ${variable.upperBound}.`,
+      error: `Line ${line}: Array '${name}' expects ${variable.bounds.length} ${variable.bounds.length === 1 ? 'index' : 'indexes'} but got ${indices.length}.`,
+    }
+  }
+
+  if (variable.bounds.length === 1) {
+    const [bound] = variable.bounds
+    const [index] = indices
+    if (index < bound.lower || index > bound.upper) {
+      return {
+        ok: false,
+        error: `Line ${line}: Array index ${index} out of bounds for '${name}'. Valid range is ${bound.lower} to ${bound.upper}.`,
+      }
+    }
+
+    return { ok: true }
+  }
+
+  const [rowBound, columnBound] = variable.bounds
+  const [row, column] = indices
+
+  if (row < rowBound.lower || row > rowBound.upper) {
+    return {
+      ok: false,
+      error: `Line ${line}: Array row index ${row} out of bounds for '${name}'. Valid row range is ${rowBound.lower} to ${rowBound.upper}.`,
+    }
+  }
+
+  if (column < columnBound.lower || column > columnBound.upper) {
+    return {
+      ok: false,
+      error: `Line ${line}: Array column index ${column} out of bounds for '${name}'. Valid column range is ${columnBound.lower} to ${columnBound.upper}.`,
     }
   }
 
   return { ok: true }
+}
+
+function arrayKey(indices: number[]): string {
+  return indices.join(',')
 }
 
 function compareValues(

@@ -110,6 +110,12 @@ export function tokenizeExpression(source: string, line: number): TokenizeResult
       continue
     }
 
+    if (char === ',') {
+      tokens.push({ type: 'comma', lexeme: char, line })
+      index += 1
+      continue
+    }
+
     const twoCharacterOperator = source.slice(index, index + 2)
     if (twoCharacterOperator === '<=' || twoCharacterOperator === '>=' || twoCharacterOperator === '<>') {
       tokens.push({ type: 'operator', lexeme: twoCharacterOperator, line })

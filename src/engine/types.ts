@@ -36,6 +36,7 @@ export type TokenType =
   | 'rightParen'
   | 'leftBracket'
   | 'rightBracket'
+  | 'comma'
   | 'eof'
 
 export type Token = {
@@ -59,7 +60,7 @@ export type Expression =
   | {
       kind: 'arrayAccess'
       name: string
-      index: Expression
+      indices: Expression[]
       line: number
     }
   | {
@@ -87,8 +88,10 @@ export type Statement =
       kind: 'declareArray'
       name: string
       elementType: VariableType
-      lowerBound: number
-      upperBound: number
+      bounds: Array<{
+        lower: number
+        upper: number
+      }>
       line: number
     }
   | {
@@ -148,7 +151,7 @@ export type AssignmentTarget =
   | {
       kind: 'arrayElement'
       name: string
-      index: Expression
+      indices: Expression[]
       line: number
     }
 
