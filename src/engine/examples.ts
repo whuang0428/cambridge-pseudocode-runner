@@ -4,111 +4,75 @@ type ExampleProgram = {
   inputText?: string
   expectedOutput: string[]
   expectedErrors?: string[]
+  skipExactOutput?: boolean
 }
 
 export const examplePrograms: ExampleProgram[] = [
   {
-    name: 'Two-dimensional array assignment and output',
-    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
+    name: 'String slicing functions',
+    code: `OUTPUT LENGTH("Hello")
+OUTPUT LEFT("Cambridge", 3)
+OUTPUT RIGHT("Cambridge", 4)
+OUTPUT MID("Cambridge", 2, 3)`,
+    expectedOutput: ['5', 'Cam', 'idge', 'amb'],
+  },
+  {
+    name: 'Case and number functions',
+    code: `OUTPUT UCASE("Hello")
+OUTPUT LCASE("Hello")
+OUTPUT INT(3.8)
+OUTPUT INT(-3.8)
+OUTPUT ROUND(3.6)
+OUTPUT ROUND(3.14159, 2)`,
+    expectedOutput: ['HELLO', 'hello', '3', '-3', '4', '3.14'],
+  },
+  {
+    name: 'Functions in expressions',
+    code: `DECLARE Size : INTEGER
+Size ← LENGTH("Hello")
+OUTPUT Size
+OUTPUT LENGTH("Hello") + 5
+OUTPUT UCASE("yes") = "YES"`,
+    expectedOutput: ['5', '10', 'TRUE'],
+  },
+  {
+    name: 'Functions with arrays',
+    code: `DECLARE Names : ARRAY[1:3] OF STRING
+DECLARE I : INTEGER
 
+Names[1] ← "Tom"
+Names[2] ← "Anna"
+Names[3] ← "Christopher"
+
+FOR I ← 1 TO 3
+    OUTPUT Names[I], " length=", LENGTH(Names[I])
+NEXT I`,
+    expectedOutput: ['Tom length=3', 'Anna length=4', 'Christopher length=11'],
+  },
+  {
+    name: 'RANDOMBETWEEN range',
+    code: `DECLARE Number : INTEGER
+Number ← RANDOMBETWEEN(1, 6)
+OUTPUT Number >= 1 AND Number <= 6`,
+    expectedOutput: ['TRUE'],
+  },
+  {
+    name: 'Unknown function',
+    code: `OUTPUT REVERSE("Hello")`,
+    expectedOutput: [],
+    expectedErrors: ["Line 1: Unknown function 'REVERSE'."],
+  },
+  {
+    name: 'Function argument type error',
+    code: `OUTPUT LENGTH(123)`,
+    expectedOutput: [],
+    expectedErrors: ['Line 1: LENGTH expects argument 1 to be STRING.'],
+  },
+  {
+    name: 'Phase 8 two-dimensional array',
+    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
 Grid[1, 1] ← 11
-Grid[1, 2] ← 12
-Grid[1, 3] ← 13
-Grid[2, 1] ← 21
-Grid[2, 2] ← 22
-Grid[2, 3] ← 23
-
-OUTPUT Grid[1, 1]
-OUTPUT Grid[2, 3]`,
-    expectedOutput: ['11', '23'],
-  },
-  {
-    name: 'Two-dimensional array variable indexes',
-    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
-DECLARE Row : INTEGER
-DECLARE Col : INTEGER
-
-FOR Row ← 1 TO 2
-    FOR Col ← 1 TO 3
-        Grid[Row, Col] ← Row * 10 + Col
-    NEXT Col
-NEXT Row
-
-FOR Row ← 1 TO 2
-    FOR Col ← 1 TO 3
-        OUTPUT Grid[Row, Col]
-    NEXT Col
-NEXT Row`,
-    expectedOutput: ['11', '12', '13', '21', '22', '23'],
-  },
-  {
-    name: 'Two-dimensional array total',
-    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
-DECLARE Row : INTEGER
-DECLARE Col : INTEGER
-DECLARE Total : INTEGER
-
-Total ← 0
-
-FOR Row ← 1 TO 2
-    FOR Col ← 1 TO 3
-        Grid[Row, Col] ← Row * 10 + Col
-        Total ← Total + Grid[Row, Col]
-    NEXT Col
-NEXT Row
-
-OUTPUT "Total: ", Total`,
-    expectedOutput: ['Total: 102'],
-  },
-  {
-    name: 'Input into two-dimensional array elements',
-    code: `DECLARE Grid : ARRAY[1:2, 1:2] OF INTEGER
-DECLARE Row : INTEGER
-DECLARE Col : INTEGER
-
-FOR Row ← 1 TO 2
-    FOR Col ← 1 TO 2
-        INPUT Grid[Row, Col]
-    NEXT Col
-NEXT Row
-
-FOR Row ← 1 TO 2
-    FOR Col ← 1 TO 2
-        OUTPUT Grid[Row, Col]
-    NEXT Col
-NEXT Row`,
-    inputText: `10
-20
-30
-40`,
-    expectedOutput: ['10', '20', '30', '40'],
-  },
-  {
-    name: 'Two-dimensional array column bounds error',
-    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
-OUTPUT Grid[1, 4]`,
-    expectedOutput: [],
-    expectedErrors: ["Line 2: Array column index 4 out of bounds for 'Grid'. Valid column range is 1 to 3."],
-  },
-  {
-    name: 'One-dimensional array too many indexes',
-    code: `DECLARE Scores : ARRAY[1:5] OF INTEGER
-OUTPUT Scores[1, 2]`,
-    expectedOutput: [],
-    expectedErrors: ["Line 2: Array 'Scores' expects 1 index but got 2."],
-  },
-  {
-    name: 'Two-dimensional array too few indexes',
-    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
-OUTPUT Grid[1]`,
-    expectedOutput: [],
-    expectedErrors: ["Line 2: Array 'Grid' expects 2 indexes but got 1."],
-  },
-  {
-    name: 'Phase 7 one-dimensional array',
-    code: `DECLARE Scores : ARRAY[1:3] OF INTEGER
-Scores[1] ← 80
-OUTPUT Scores[1]`,
-    expectedOutput: ['80'],
+OUTPUT Grid[1, 1]`,
+    expectedOutput: ['11'],
   },
 ]

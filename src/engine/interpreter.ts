@@ -454,6 +454,10 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
     return { ok: true, value: variable.values.get(arrayKey(indices.value))! }
   }
 
+  if (expression.kind === 'functionCall') {
+    return evaluateFunctionCall(expression, variables)
+  }
+
   if (expression.kind === 'unary') {
     const value = evaluateExpression(expression.expression, variables)
     if (!value.ok) return value
@@ -519,6 +523,157 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
       left.value,
     )} and ${valueType(right.value)}.`,
   }
+}
+
+function evaluateFunctionCall(
+  expression: Extract<Expression, { kind: 'functionCall' }>,
+  variables: Map<string, StoredVariable>,
+): EvaluationResult {
+  const args: RuntimeValue[] = []
+
+  for (const arg of expression.args) {
+    const evaluated = evaluateExpression(arg, variables)
+    if (!evaluated.ok) return evaluated
+    args.push(evaluated.value)
+  }
+
+  if (expression.name === 'LENGTH') {
+    const arity = checkArity(expression.name, args, 1, expression.line)
+    if (!arity.ok) return arity
+    const text = expectString(expression.name, args[0], 1, expression.line)
+    if (!text.ok) return text
+    return { ok: true, value: text.value.length }
+  }
+
+  if (expression.name === 'LEFT') {
+    const arity = checkArity(expression.name, args, 2, expression.line)
+    if (!arity.ok) return arity
+    const text = expectString(expression.name, args[0], 1, expression.line)
+    if (!text.ok) return text
+    const count = expectInteger(expression.name, args[1], 2, expression.line)
+    if (!count.ok) return count
+    if (count.value < 0) return { ok: false, error: `Line ${expression.line}: LEFT count cannot be negative.` }
+    return { ok: true, value: text.value.slice(0, count.value) }
+  }
+
+  if (expression.name === 'RIGHT') {
+    const arity = checkArity(expression.name, args, 2, expression.line)
+    if (!arity.ok) return arity
+    const text = expectString(expression.name, args[0], 1, expression.line)
+    if (!text.ok) return text
+    const count = expectInteger(expression.name, args[1], 2, expression.line)
+    if (!count.ok) return count
+    if (count.value < 0) return { ok: false, error: `Line ${expression.line}: RIGHT count cannot be negative.` }
+    return { ok: true, value: count.value >= text.value.length ? text.value : text.value.slice(text.value.length - count.value) }
+  }
+
+  if (expression.name === 'MID') {
+    const arity = checkArity(expression.name, args, 3, expression.line)
+    if (!arity.ok) return arity
+    const text = expectString(expression.name, args[0], 1, expression.line)
+    if (!text.ok) return text
+    const start = expectInteger(expression.name, args[1], 2, expression.line)
+    if (!start.ok) return start
+    const count = expectInteger(expression.name, args[2], 3, expression.line)
+    if (!count.ok) return count
+    if (start.value < 1) return { ok: false, error: `Line ${expression.line}: MID start position must be at least 1.` }
+    if (count.value < 0) return { ok: false, error: `Line ${expression.line}: MID count cannot be negative.` }
+    return { ok: true, value: text.value.slice(start.value - 1, start.value - 1 + count.value) }
+  }
+
+  if (expression.name === 'UCASE' || expression.name === 'LCASE') {
+    const arity = checkArity(expression.name, args, 1, expression.line)
+    if (!arity.ok) return arity
+    const text = expectString(expression.name, args[0], 1, expression.line)
+    if (!text.ok) return text
+    return { ok: true, value: expression.name === 'UCASE' ? text.value.toUpperCase() : text.value.toLowerCase() }
+  }
+
+  if (expression.name === 'INT') {
+    const arity = checkArity(expression.name, args, 1, expression.line)
+    if (!arity.ok) return arity
+    const number = expectNumber(expression.name, args[0], 1, expression.line)
+    if (!number.ok) return number
+    return { ok: true, value: Math.trunc(number.value) }
+  }
+
+  if (expression.name === 'ROUND') {
+    const arity = checkArityRange(expression.name, args, 1, 2, expression.line)
+    if (!arity.ok) return arity
+    const number = expectNumber(expression.name, args[0], 1, expression.line)
+    if (!number.ok) return number
+    if (args.length === 1) return { ok: true, value: Math.round(number.value) }
+    const decimalPlaces = expectInteger(expression.name, args[1], 2, expression.line)
+    if (!decimalPlaces.ok) return decimalPlaces
+    if (decimalPlaces.value < 0) return { ok: false, error: `Line ${expression.line}: ROUND decimal places cannot be negative.` }
+    const factor = 10 ** decimalPlaces.value
+    return { ok: true, value: Math.round(number.value * factor) / factor }
+  }
+
+  if (expression.name === 'RANDOMBETWEEN') {
+    const arity = checkArity(expression.name, args, 2, expression.line)
+    if (!arity.ok) return arity
+    const low = expectInteger(expression.name, args[0], 1, expression.line)
+    if (!low.ok) return low
+    const high = expectInteger(expression.name, args[1], 2, expression.line)
+    if (!high.ok) return high
+    if (low.value > high.value) {
+      return { ok: false, error: `Line ${expression.line}: RANDOMBETWEEN lower bound cannot be greater than upper bound.` }
+    }
+    return { ok: true, value: Math.floor(Math.random() * (high.value - low.value + 1)) + low.value }
+  }
+
+  return { ok: false, error: `Line ${expression.line}: Unknown function '${expression.name}'.` }
+}
+
+function checkArity(name: string, args: RuntimeValue[], expected: number, line: number): { ok: true } | { ok: false; error: string } {
+  if (args.length !== expected) {
+    return { ok: false, error: `Line ${line}: ${name} expects ${expected} ${expected === 1 ? 'argument' : 'arguments'} but got ${args.length}.` }
+  }
+  return { ok: true }
+}
+
+function checkArityRange(
+  name: string,
+  args: RuntimeValue[],
+  min: number,
+  max: number,
+  line: number,
+): { ok: true } | { ok: false; error: string } {
+  if (args.length < min || args.length > max) {
+    return { ok: false, error: `Line ${line}: ${name} expects ${min} or ${max} arguments but got ${args.length}.` }
+  }
+  return { ok: true }
+}
+
+function expectString(
+  name: string,
+  value: RuntimeValue,
+  position: number,
+  line: number,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof value === 'string') return { ok: true, value }
+  return { ok: false, error: `Line ${line}: ${name} expects argument ${position} to be STRING.` }
+}
+
+function expectInteger(
+  name: string,
+  value: RuntimeValue,
+  position: number,
+  line: number,
+): { ok: true; value: number } | { ok: false; error: string } {
+  if (isIntegerValue(value)) return { ok: true, value }
+  return { ok: false, error: `Line ${line}: ${name} expects argument ${position} to be INTEGER.` }
+}
+
+function expectNumber(
+  name: string,
+  value: RuntimeValue,
+  position: number,
+  line: number,
+): { ok: true; value: number } | { ok: false; error: string } {
+  if (typeof value === 'number') return { ok: true, value }
+  return { ok: false, error: `Line ${line}: ${name} expects argument ${position} to be NUMBER.` }
 }
 
 function evaluateIndices(

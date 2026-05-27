@@ -64,6 +64,12 @@ export type Expression =
       line: number
     }
   | {
+      kind: 'functionCall'
+      name: string
+      args: Expression[]
+      line: number
+    }
+  | {
       kind: 'unary'
       operator: UnaryOperator
       expression: Expression

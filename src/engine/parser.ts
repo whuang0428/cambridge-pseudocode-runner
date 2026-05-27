@@ -514,6 +514,16 @@ class ExpressionParser {
 
     if (this.match('identifier')) {
       const token = this.previous()
+      if (this.match('leftParen')) {
+        const args: Expression[] = []
+        if (!this.check('rightParen')) {
+          args.push(this.parseOr())
+          while (this.match('comma')) args.push(this.parseOr())
+        }
+        if (!this.match('rightParen')) this.error(token, 'Invalid expression.')
+        return { kind: 'functionCall', name: token.lexeme.toUpperCase(), args, line: token.line }
+      }
+
       if (this.match('leftBracket')) {
         const indices: Expression[] = [this.parseOr()]
         while (this.match('comma')) indices.push(this.parseOr())

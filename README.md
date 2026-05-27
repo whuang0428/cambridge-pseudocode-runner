@@ -4,7 +4,7 @@ A browser-based runner for students learning Cambridge pseudocode.
 
 The long-term goal is to support Cambridge IGCSE 0478 and Cambridge AS/A Level 9618 pseudocode directly in the browser.
 
-The current Phase 8 prototype supports a small interpreter for declarations, one- and two-dimensional arrays, assignments, input, output, simple expressions, integer `DIV` and `MOD`, comparisons, boolean logic, `IF` / `ELSE` / `ENDIF` conditionals, `FOR` / `NEXT` loops, `WHILE` / `ENDWHILE` loops, and `REPEAT` / `UNTIL` loops.
+The current Phase 9 prototype supports a small interpreter for declarations, one- and two-dimensional arrays, built-in helper functions, assignments, input, output, simple expressions, integer `DIV` and `MOD`, comparisons, boolean logic, conditionals, and loops.
 
 ## Run Locally
 
@@ -46,4 +46,4 @@ In the GitHub repository settings, set Pages to use GitHub Actions as the deploy
 
 ## Current Status
 
-Phase 8 frontend prototype. Supported syntax is intentionally small; CASE, functions, procedures, files, records, user-defined types, and OOP are not implemented yet.
+Phase 9 frontend prototype. User-defined functions/procedures, BYREF/BYVALUE, CASE, files, records, user-defined types, and OOP are not implemented yet.
