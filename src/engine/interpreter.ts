@@ -15,10 +15,12 @@ type EvaluationResult =
       error: string
     }
 
-export function interpret(statements: Statement[], initialErrors: string[] = []): RunResult {
+export function interpret(statements: Statement[], inputText = '', initialErrors: string[] = []): RunResult {
   const output: string[] = []
   const errors = [...initialErrors]
   const variables = new Map<string, StoredVariable>()
+  const inputLines = inputText.replace(/\r\n/g, '\n').split('\n')
+  let inputIndex = 0
 
   if (errors.length > 0) {
     return { output, errors, variables: toPublicVariables(variables) }
@@ -28,7 +30,7 @@ export function interpret(statements: Statement[], initialErrors: string[] = [])
     if (statement.kind === 'declare') {
       if (variables.has(statement.name)) {
         errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
-        continue
+        break
       }
 
       variables.set(statement.name, {
@@ -38,38 +40,74 @@ export function interpret(statements: Statement[], initialErrors: string[] = [])
       continue
     }
 
+    if (statement.kind === 'input') {
+      const target = variables.get(statement.name)
+
+      if (!target) {
+        errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+        break
+      }
+
+      if (inputIndex >= inputLines.length || (inputLines.length === 1 && inputLines[0] === '')) {
+        errors.push(`Line ${statement.line}: Not enough input values.`)
+        break
+      }
+
+      const rawInput = inputLines[inputIndex]
+      inputIndex += 1
+      const converted = convertInput(rawInput, target.type, statement.line)
+
+      if (!converted.ok) {
+        errors.push(converted.error)
+        break
+      }
+
+      target.value = converted.value
+      continue
+    }
+
     if (statement.kind === 'assign') {
       const target = variables.get(statement.name)
 
       if (!target) {
         errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
-        continue
+        break
       }
 
       const evaluated = evaluateExpression(statement.expression, variables)
       if (!evaluated.ok) {
         errors.push(evaluated.error)
-        continue
+        break
       }
 
       if (!canAssign(target.type, evaluated.value)) {
         errors.push(
           `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${statement.name}'.`,
         )
-        continue
+        break
       }
 
       target.value = evaluated.value
       continue
     }
 
-    const evaluated = evaluateExpression(statement.expression, variables)
-    if (!evaluated.ok) {
-      errors.push(evaluated.error)
-      continue
+    const values: RuntimeValue[] = []
+
+    for (const expression of statement.expressions) {
+      const evaluated = evaluateExpression(expression, variables)
+      if (!evaluated.ok) {
+        errors.push(evaluated.error)
+        break
+      }
+
+      values.push(evaluated.value)
     }
 
-    output.push(formatValue(evaluated.value))
+    if (values.length === statement.expressions.length) {
+      output.push(values.map(formatValue).join(''))
+    } else {
+      break
+    }
   }
 
   return { output, errors, variables: toPublicVariables(variables) }
@@ -93,6 +131,22 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
     return { ok: true, value: variable.value }
   }
 
+  if (expression.kind === 'unary') {
+    const value = evaluateExpression(expression.expression, variables)
+    if (!value.ok) {
+      return value
+    }
+
+    if (typeof value.value !== 'boolean') {
+      return {
+        ok: false,
+        error: `Line ${expression.line}: Operator 'NOT' cannot be used with ${valueType(value.value)}.`,
+      }
+    }
+
+    return { ok: true, value: !value.value }
+  }
+
   const left = evaluateExpression(expression.left, variables)
   if (!left.ok) {
     return left
@@ -113,20 +167,54 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
     }
   }
 
-  if (
-    (expression.operator === '-' || expression.operator === '*' || expression.operator === '/') &&
-    typeof left.value === 'number' &&
-    typeof right.value === 'number'
-  ) {
-    if (expression.operator === '-') {
-      return { ok: true, value: left.value - right.value }
-    }
+  if (expression.operator === '-' || expression.operator === '*' || expression.operator === '/') {
+    if (typeof left.value === 'number' && typeof right.value === 'number') {
+      if (expression.operator === '-') {
+        return { ok: true, value: left.value - right.value }
+      }
 
-    if (expression.operator === '*') {
-      return { ok: true, value: left.value * right.value }
-    }
+      if (expression.operator === '*') {
+        return { ok: true, value: left.value * right.value }
+      }
 
-    return { ok: true, value: left.value / right.value }
+      if (right.value === 0) {
+        return { ok: false, error: `Line ${expression.line}: Division by zero.` }
+      }
+
+      return { ok: true, value: left.value / right.value }
+    }
+  }
+
+  if (expression.operator === 'DIV' || expression.operator === 'MOD') {
+    if (
+      typeof left.value === 'number' &&
+      typeof right.value === 'number' &&
+      Number.isInteger(left.value) &&
+      Number.isInteger(right.value)
+    ) {
+      if (right.value === 0) {
+        return { ok: false, error: `Line ${expression.line}: Division by zero.` }
+      }
+
+      if (expression.operator === 'DIV') {
+        return { ok: true, value: Math.trunc(left.value / right.value) }
+      }
+
+      return { ok: true, value: left.value % right.value }
+    }
+  }
+
+  if (isComparisonOperator(expression.operator)) {
+    return compareValues(left.value, right.value, expression.operator, expression.line)
+  }
+
+  if (expression.operator === 'AND' || expression.operator === 'OR') {
+    if (typeof left.value === 'boolean' && typeof right.value === 'boolean') {
+      return {
+        ok: true,
+        value: expression.operator === 'AND' ? left.value && right.value : left.value || right.value,
+      }
+    }
   }
 
   return {
@@ -135,6 +223,78 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
       left.value,
     )} and ${valueType(right.value)}.`,
   }
+}
+
+function compareValues(
+  left: RuntimeValue,
+  right: RuntimeValue,
+  operator: '=' | '<>' | '<' | '<=' | '>' | '>=',
+  line: number,
+): EvaluationResult {
+  if (operator === '=') {
+    return { ok: true, value: left === right }
+  }
+
+  if (operator === '<>') {
+    return { ok: true, value: left !== right }
+  }
+
+  if (typeof left === 'number' && typeof right === 'number') {
+    if (operator === '<') {
+      return { ok: true, value: left < right }
+    }
+
+    if (operator === '<=') {
+      return { ok: true, value: left <= right }
+    }
+
+    if (operator === '>') {
+      return { ok: true, value: left > right }
+    }
+
+    return { ok: true, value: left >= right }
+  }
+
+  return {
+    ok: false,
+    error: `Line ${line}: Operator '${operator}' cannot be used with ${valueType(left)} and ${valueType(right)}.`,
+  }
+}
+
+function convertInput(rawInput: string, type: VariableType, line: number): EvaluationResult {
+  const text = rawInput.trim()
+
+  if (type === 'STRING') {
+    return { ok: true, value: rawInput }
+  }
+
+  if (type === 'INTEGER') {
+    const value = Number(text)
+    if (text !== '' && Number.isInteger(value)) {
+      return { ok: true, value }
+    }
+
+    return { ok: false, error: `Line ${line}: Cannot convert input '${rawInput}' to INTEGER.` }
+  }
+
+  if (type === 'REAL') {
+    const value = Number(text)
+    if (text !== '' && Number.isFinite(value)) {
+      return { ok: true, value }
+    }
+
+    return { ok: false, error: `Line ${line}: Cannot convert input '${rawInput}' to REAL.` }
+  }
+
+  if (text.toUpperCase() === 'TRUE') {
+    return { ok: true, value: true }
+  }
+
+  if (text.toUpperCase() === 'FALSE') {
+    return { ok: true, value: false }
+  }
+
+  return { ok: false, error: `Line ${line}: Cannot convert input '${rawInput}' to BOOLEAN.` }
 }
 
 function defaultValue(type: VariableType): RuntimeValue {
@@ -163,6 +323,10 @@ function canAssign(type: VariableType, value: RuntimeValue): boolean {
   }
 
   return typeof value === 'boolean'
+}
+
+function isComparisonOperator(operator: string): operator is '=' | '<>' | '<' | '<=' | '>' | '>=' {
+  return operator === '=' || operator === '<>' || operator === '<' || operator === '<=' || operator === '>' || operator === '>='
 }
 
 function valueType(value: RuntimeValue): VariableType {

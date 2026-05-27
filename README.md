@@ -2,7 +2,9 @@
 
 A browser-based runner for students learning Cambridge pseudocode.
 
-The long-term goal is to support Cambridge IGCSE 0478 and Cambridge AS/A Level 9618 pseudocode directly in the browser. This first version is a Phase 0 prototype: it only provides the React UI layout and deployment setup. The interpreter engine is not implemented yet.
+The long-term goal is to support Cambridge IGCSE 0478 and Cambridge AS/A Level 9618 pseudocode directly in the browser.
+
+The current Phase 2 prototype supports a small interpreter for declarations, assignments, input, output, simple expressions, integer `DIV` and `MOD`, comparisons, and boolean logic.
 
 ## Run Locally
 
@@ -44,4 +46,4 @@ In the GitHub repository settings, set Pages to use GitHub Actions as the deploy
 
 ## Current Status
 
-Phase 0 UI only. The Run button displays a placeholder message and does not interpret pseudocode yet.
+Phase 2 frontend prototype. Supported syntax is intentionally small; IF statements, loops, arrays, functions, procedures, files, and OOP are not implemented yet.

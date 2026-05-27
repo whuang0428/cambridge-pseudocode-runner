@@ -5,6 +5,8 @@ type TokenizeResult = {
   errors: string[]
 }
 
+const wordOperators = new Set(['DIV', 'MOD', 'AND', 'OR', 'NOT'])
+
 export function tokenizeExpression(source: string, line: number): TokenizeResult {
   const tokens: Token[] = []
   const errors: string[] = []
@@ -75,6 +77,8 @@ export function tokenizeExpression(source: string, line: number): TokenizeResult
 
       if (upper === 'TRUE' || upper === 'FALSE') {
         tokens.push({ type: 'boolean', lexeme, value: upper === 'TRUE', line })
+      } else if (wordOperators.has(upper)) {
+        tokens.push({ type: 'operator', lexeme: upper, line })
       } else {
         tokens.push({ type: 'identifier', lexeme, line })
       }
@@ -94,7 +98,14 @@ export function tokenizeExpression(source: string, line: number): TokenizeResult
       continue
     }
 
-    if (char === '+' || char === '-' || char === '*' || char === '/') {
+    const twoCharacterOperator = source.slice(index, index + 2)
+    if (twoCharacterOperator === '<=' || twoCharacterOperator === '>=' || twoCharacterOperator === '<>') {
+      tokens.push({ type: 'operator', lexeme: twoCharacterOperator, line })
+      index += 2
+      continue
+    }
+
+    if (char === '+' || char === '-' || char === '*' || char === '/' || char === '=' || char === '<' || char === '>') {
       tokens.push({ type: 'operator', lexeme: char, line })
       index += 1
       continue

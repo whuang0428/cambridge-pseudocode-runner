@@ -8,6 +8,24 @@ export type RunResult = {
   variables: Record<string, unknown>
 }
 
+export type BinaryOperator =
+  | '+'
+  | '-'
+  | '*'
+  | '/'
+  | 'DIV'
+  | 'MOD'
+  | '='
+  | '<>'
+  | '<'
+  | '<='
+  | '>'
+  | '>='
+  | 'AND'
+  | 'OR'
+
+export type UnaryOperator = 'NOT'
+
 export type TokenType =
   | 'number'
   | 'string'
@@ -37,8 +55,14 @@ export type Expression =
       line: number
     }
   | {
+      kind: 'unary'
+      operator: UnaryOperator
+      expression: Expression
+      line: number
+    }
+  | {
       kind: 'binary'
-      operator: '+' | '-' | '*' | '/'
+      operator: BinaryOperator
       left: Expression
       right: Expression
       line: number
@@ -58,8 +82,13 @@ export type Statement =
       line: number
     }
   | {
+      kind: 'input'
+      name: string
+      line: number
+    }
+  | {
       kind: 'output'
-      expression: Expression
+      expressions: Expression[]
       line: number
     }
 

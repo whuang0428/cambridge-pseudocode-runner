@@ -1,7 +1,8 @@
 import { tokenizeExpression } from './tokenizer'
-import type { Expression, ParseResult, Statement, Token, VariableType } from './types'
+import type { BinaryOperator, Expression, ParseResult, Statement, Token, VariableType } from './types'
 
 const declarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
+const inputPattern = /^INPUT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const outputPattern = /^OUTPUT(?:\s+(.+))?$/i
 const assignmentPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s*(.+)$/
 
@@ -29,6 +30,12 @@ export function parsePseudocode(code: string): ParseResult {
       return
     }
 
+    const input = text.match(inputPattern)
+    if (input) {
+      statements.push({ kind: 'input', name: input[1], line })
+      return
+    }
+
     const output = text.match(outputPattern)
     if (output) {
       if (!output[1]?.trim()) {
@@ -36,9 +43,12 @@ export function parsePseudocode(code: string): ParseResult {
         return
       }
 
-      const expression = parseExpression(output[1], line, errors)
-      if (expression) {
-        statements.push({ kind: 'output', expression, line })
+      const expressions = splitOutputItems(output[1], line, errors)
+        .map((item) => parseExpression(item, line, errors))
+        .filter((expression): expression is Expression => expression !== null)
+
+      if (expressions.length > 0) {
+        statements.push({ kind: 'output', expressions, line })
       }
       return
     }
@@ -56,6 +66,56 @@ export function parsePseudocode(code: string): ParseResult {
   })
 
   return { statements, errors }
+}
+
+function splitOutputItems(source: string, line: number, errors: string[]): string[] {
+  const items: string[] = []
+  let current = ''
+  let depth = 0
+  let inString = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+
+    if (char === '"') {
+      inString = !inString
+      current += char
+      continue
+    }
+
+    if (!inString && char === '(') {
+      depth += 1
+    }
+
+    if (!inString && char === ')') {
+      depth -= 1
+    }
+
+    if (!inString && depth === 0 && char === ',') {
+      if (!current.trim()) {
+        errors.push(`Line ${line}: Invalid OUTPUT statement.`)
+      } else {
+        items.push(current.trim())
+      }
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  if (inString || depth !== 0) {
+    items.push(source.trim())
+    return items
+  }
+
+  if (!current.trim()) {
+    errors.push(`Line ${line}: Invalid OUTPUT statement.`)
+  } else {
+    items.push(current.trim())
+  }
+
+  return items
 }
 
 function parseExpression(source: string, line: number, errors: string[]): Expression | null {
@@ -80,10 +140,47 @@ class ExpressionParser {
   constructor(private readonly tokens: Token[]) {}
 
   parse(): Expression {
-    const expression = this.parseAddition()
+    const expression = this.parseOr()
 
     if (!this.isAtEnd()) {
-      this.error(this.peek(), 'Unexpected token in expression.')
+      this.error(this.peek(), 'Invalid expression.')
+    }
+
+    return expression
+  }
+
+  private parseOr(): Expression {
+    let expression = this.parseAnd()
+
+    while (this.matchOperator('OR')) {
+      expression = this.binaryExpression(expression)
+    }
+
+    return expression
+  }
+
+  private parseAnd(): Expression {
+    let expression = this.parseComparison()
+
+    while (this.matchOperator('AND')) {
+      expression = this.binaryExpression(expression)
+    }
+
+    return expression
+  }
+
+  private parseComparison(): Expression {
+    let expression = this.parseAddition()
+
+    while (
+      this.matchOperator('=') ||
+      this.matchOperator('<>') ||
+      this.matchOperator('<') ||
+      this.matchOperator('<=') ||
+      this.matchOperator('>') ||
+      this.matchOperator('>=')
+    ) {
+      expression = this.binaryExpression(expression)
     }
 
     return expression
@@ -93,36 +190,39 @@ class ExpressionParser {
     let expression = this.parseMultiplication()
 
     while (this.matchOperator('+') || this.matchOperator('-')) {
-      const operator = this.previous()
-      const right = this.parseMultiplication()
-      expression = {
-        kind: 'binary',
-        operator: operator.lexeme as '+' | '-',
-        left: expression,
-        right,
-        line: operator.line,
-      }
+      expression = this.binaryExpression(expression)
     }
 
     return expression
   }
 
   private parseMultiplication(): Expression {
-    let expression = this.parsePrimary()
+    let expression = this.parseUnary()
 
-    while (this.matchOperator('*') || this.matchOperator('/')) {
+    while (
+      this.matchOperator('*') ||
+      this.matchOperator('/') ||
+      this.matchOperator('DIV') ||
+      this.matchOperator('MOD')
+    ) {
+      expression = this.binaryExpression(expression)
+    }
+
+    return expression
+  }
+
+  private parseUnary(): Expression {
+    if (this.matchOperator('NOT')) {
       const operator = this.previous()
-      const right = this.parsePrimary()
-      expression = {
-        kind: 'binary',
-        operator: operator.lexeme as '*' | '/',
-        left: expression,
-        right,
+      return {
+        kind: 'unary',
+        operator: 'NOT',
+        expression: this.parseUnary(),
         line: operator.line,
       }
     }
 
-    return expression
+    return this.parsePrimary()
   }
 
   private parsePrimary(): Expression {
@@ -138,21 +238,54 @@ class ExpressionParser {
 
     if (this.match('leftParen')) {
       const opening = this.previous()
-      const expression = this.parseAddition()
+      const expression = this.parseOr()
 
       if (!this.match('rightParen')) {
-        this.error(opening, 'Expected closing parenthesis.')
+        this.error(opening, 'Invalid expression.')
       }
 
       return expression
     }
 
     const token = this.peek()
-    this.error(token, 'Expected expression.')
+    this.error(token, 'Invalid expression.')
     if (!this.isAtEnd()) {
       this.advance()
     }
     return { kind: 'literal', value: 0, line: token.line }
+  }
+
+  private binaryExpression(left: Expression): Expression {
+    const operator = this.previous()
+    const right = this.parsePrecedenceAfter(operator.lexeme)
+
+    return {
+      kind: 'binary',
+      operator: operator.lexeme as BinaryOperator,
+      left,
+      right,
+      line: operator.line,
+    }
+  }
+
+  private parsePrecedenceAfter(operator: string): Expression {
+    if (operator === 'OR') {
+      return this.parseAnd()
+    }
+
+    if (operator === 'AND') {
+      return this.parseComparison()
+    }
+
+    if (operator === '=' || operator === '<>' || operator === '<' || operator === '<=' || operator === '>' || operator === '>=') {
+      return this.parseAddition()
+    }
+
+    if (operator === '+' || operator === '-') {
+      return this.parseMultiplication()
+    }
+
+    return this.parseUnary()
   }
 
   private match(type: Token['type']): boolean {

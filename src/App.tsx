@@ -1,26 +1,32 @@
 import { useState } from 'react'
 import { runPseudocode } from './engine/runPseudocode'
 
-const defaultCode = `DECLARE Number : INTEGER
-DECLARE Name : STRING
-Number ← 5
-Name ← "Tom"
-OUTPUT Number
-OUTPUT "Hello " + Name
-OUTPUT Number + 3`
+const defaultCode = `DECLARE A : INTEGER
+DECLARE B : INTEGER
+DECLARE Total : INTEGER
+INPUT A
+INPUT B
+Total ← A + B
+OUTPUT "The total is ", Total
+OUTPUT "A is greater than B: ", A > B
+OUTPUT "A DIV B = ", A DIV B
+OUTPUT "A MOD B = ", A MOD B`
+
+const defaultInput = `17
+5`
 
 type Mode = 'igcse' | 'alevel'
 
 function App() {
   const [mode, setMode] = useState<Mode>('igcse')
   const [code, setCode] = useState(defaultCode)
-  const [standardInput, setStandardInput] = useState('')
+  const [standardInput, setStandardInput] = useState(defaultInput)
   const [output, setOutput] = useState('')
   const [error, setError] = useState('')
   const [variables, setVariables] = useState('')
 
   function handleRun() {
-    const result = runPseudocode(code)
+    const result = runPseudocode(code, standardInput)
 
     setOutput(result.output.join('\n'))
     setError(result.errors.join('\n'))
@@ -103,7 +109,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 1 prototype. Supports DECLARE, assignment, simple expressions, and OUTPUT.
+        Phase 2 prototype. Supports INPUT, OUTPUT, assignments, expressions, comparisons, and boolean logic.
       </p>
     </main>
   )
