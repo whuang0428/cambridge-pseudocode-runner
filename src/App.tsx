@@ -1,8 +1,13 @@
 import { useState } from 'react'
+import { runPseudocode } from './engine/runPseudocode'
 
 const defaultCode = `DECLARE Number : INTEGER
+DECLARE Name : STRING
 Number ← 5
-OUTPUT Number`
+Name ← "Tom"
+OUTPUT Number
+OUTPUT "Hello " + Name
+OUTPUT Number + 3`
 
 type Mode = 'igcse' | 'alevel'
 
@@ -12,12 +17,14 @@ function App() {
   const [standardInput, setStandardInput] = useState('')
   const [output, setOutput] = useState('')
   const [error, setError] = useState('')
+  const [variables, setVariables] = useState('')
 
   function handleRun() {
-    setError('')
-    setOutput(
-      'Interpreter engine is not implemented yet. This Phase 0 build only tests the UI and deployment setup.',
-    )
+    const result = runPseudocode(code)
+
+    setOutput(result.output.join('\n'))
+    setError(result.errors.join('\n'))
+    setVariables(formatVariables(result.variables))
   }
 
   return (
@@ -87,12 +94,41 @@ function App() {
             <h2 id="error-heading">Error</h2>
             <pre>{error || 'No errors.'}</pre>
           </section>
+
+          <section className="panel" aria-labelledby="variables-heading">
+            <h2 id="variables-heading">Variables</h2>
+            <pre>{variables || 'No variables yet.'}</pre>
+          </section>
         </aside>
       </section>
 
-      <p className="phase-note">Phase 0 prototype. Interpreter engine not implemented yet.</p>
+      <p className="phase-note">
+        Phase 1 prototype. Supports DECLARE, assignment, simple expressions, and OUTPUT.
+      </p>
     </main>
   )
+}
+
+function formatVariables(variables: Record<string, unknown>): string {
+  const entries = Object.entries(variables)
+
+  if (entries.length === 0) {
+    return ''
+  }
+
+  return entries.map(([name, value]) => `${name} = ${formatVariableValue(value)}`).join('\n')
+}
+
+function formatVariableValue(value: unknown): string {
+  if (typeof value === 'boolean') {
+    return value ? 'TRUE' : 'FALSE'
+  }
+
+  if (typeof value === 'string') {
+    return `"${value}"`
+  }
+
+  return String(value)
 }
 
 export default App
