@@ -1,21 +1,25 @@
 import { useState } from 'react'
 import { runPseudocode } from './engine/runPseudocode'
 
-const defaultCode = `DECLARE Count : INTEGER
+const defaultCode = `DECLARE Scores : ARRAY[1:5] OF INTEGER
+DECLARE I : INTEGER
 DECLARE Total : INTEGER
 
-Count ← 1
 Total ← 0
 
-REPEAT
-    Total ← Total + Count
-    OUTPUT "Count=", Count, " Total=", Total
-    Count ← Count + 1
-UNTIL Count > 5
+FOR I ← 1 TO 5
+    INPUT Scores[I]
+    Total ← Total + Scores[I]
+NEXT I
 
-OUTPUT "Final total: ", Total`
+OUTPUT "Total: ", Total
+OUTPUT "Average: ", Total / 5`
 
-const defaultInput = ''
+const defaultInput = `80
+65
+90
+72
+88`
 
 type Mode = 'igcse' | 'alevel'
 
@@ -111,7 +115,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 6 prototype. Supports REPEAT/UNTIL loops, WHILE loops, FOR loops, IF blocks, input, output, assignments, expressions, and boolean logic.
+        Phase 7 prototype. Supports one-dimensional arrays, loops, IF blocks, input, output, assignments, expressions, and boolean logic.
       </p>
     </main>
   )
@@ -128,6 +132,12 @@ function formatVariables(variables: Record<string, unknown>): string {
 }
 
 function formatVariableValue(value: unknown): string {
+  if (isPlainObject(value)) {
+    return Object.entries(value)
+      .map(([index, item]) => `[${index}] = ${formatVariableValue(item)}`)
+      .join('\n')
+  }
+
   if (typeof value === 'boolean') {
     return value ? 'TRUE' : 'FALSE'
   }
@@ -137,6 +147,10 @@ function formatVariableValue(value: unknown): string {
   }
 
   return String(value)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export default App

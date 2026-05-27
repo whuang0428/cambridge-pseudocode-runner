@@ -34,6 +34,8 @@ export type TokenType =
   | 'operator'
   | 'leftParen'
   | 'rightParen'
+  | 'leftBracket'
+  | 'rightBracket'
   | 'eof'
 
 export type Token = {
@@ -52,6 +54,12 @@ export type Expression =
   | {
       kind: 'variable'
       name: string
+      line: number
+    }
+  | {
+      kind: 'arrayAccess'
+      name: string
+      index: Expression
       line: number
     }
   | {
@@ -76,14 +84,22 @@ export type Statement =
       line: number
     }
   | {
-      kind: 'assign'
+      kind: 'declareArray'
       name: string
+      elementType: VariableType
+      lowerBound: number
+      upperBound: number
+      line: number
+    }
+  | {
+      kind: 'assign'
+      target: AssignmentTarget
       expression: Expression
       line: number
     }
   | {
       kind: 'input'
-      name: string
+      target: AssignmentTarget
       line: number
     }
   | {
@@ -121,6 +137,19 @@ export type Statement =
       untilCondition: Expression
       line: number
       untilLine: number
+    }
+
+export type AssignmentTarget =
+  | {
+      kind: 'variable'
+      name: string
+      line: number
+    }
+  | {
+      kind: 'arrayElement'
+      name: string
+      index: Expression
+      line: number
     }
 
 export type ParseResult = {

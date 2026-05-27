@@ -1,11 +1,22 @@
-import type { Expression, RuntimeValue, RunResult, Statement, VariableType } from './types'
+import type { AssignmentTarget, Expression, RuntimeValue, RunResult, Statement, VariableType } from './types'
 
 const maxExecutionSteps = 100000
 
-type StoredVariable = {
+type ScalarVariable = {
+  kind: 'scalar'
   type: VariableType
   value: RuntimeValue
 }
+
+type ArrayVariable = {
+  kind: 'array'
+  elementType: VariableType
+  lowerBound: number
+  upperBound: number
+  values: Map<number, RuntimeValue>
+}
+
+type StoredVariable = ScalarVariable | ArrayVariable
 
 type RuntimeState = {
   output: string[]
@@ -20,6 +31,20 @@ type EvaluationResult =
   | {
       ok: true
       value: RuntimeValue
+    }
+  | {
+      ok: false
+      error: string
+    }
+
+type TargetResult =
+  | {
+      ok: true
+      name: string
+      type: VariableType
+      value: RuntimeValue
+      setValue: (value: RuntimeValue) => void
+      arrayName?: string
     }
   | {
       ok: false
@@ -51,19 +76,20 @@ function executeStatements(statements: Statement[], state: RuntimeState): void {
   for (const statement of statements) {
     executeStatement(statement, state)
 
-    if (state.errors.length > 0) {
-      return
-    }
+    if (state.errors.length > 0) return
   }
 }
 
 function executeStatement(statement: Statement, state: RuntimeState): void {
-  if (!consumeExecutionStep(statement.line, state)) {
+  if (!consumeExecutionStep(statement.line, state)) return
+
+  if (statement.kind === 'declare') {
+    executeScalarDeclaration(statement, state)
     return
   }
 
-  if (statement.kind === 'declare') {
-    executeDeclaration(statement, state)
+  if (statement.kind === 'declareArray') {
+    executeArrayDeclaration(statement, state)
     return
   }
 
@@ -100,23 +126,44 @@ function executeStatement(statement: Statement, state: RuntimeState): void {
   executeFor(statement, state)
 }
 
-function executeDeclaration(statement: Extract<Statement, { kind: 'declare' }>, state: RuntimeState): void {
+function executeScalarDeclaration(statement: Extract<Statement, { kind: 'declare' }>, state: RuntimeState): void {
   if (state.variables.has(statement.name)) {
     state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
     return
   }
 
   state.variables.set(statement.name, {
+    kind: 'scalar',
     type: statement.variableType,
     value: defaultValue(statement.variableType),
   })
 }
 
-function executeInput(statement: Extract<Statement, { kind: 'input' }>, state: RuntimeState): void {
-  const target = state.variables.get(statement.name)
+function executeArrayDeclaration(statement: Extract<Statement, { kind: 'declareArray' }>, state: RuntimeState): void {
+  if (state.variables.has(statement.name)) {
+    state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has already been declared.`)
+    return
+  }
 
-  if (!target) {
-    state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+  const values = new Map<number, RuntimeValue>()
+  for (let index = statement.lowerBound; index <= statement.upperBound; index += 1) {
+    values.set(index, defaultValue(statement.elementType))
+  }
+
+  state.variables.set(statement.name, {
+    kind: 'array',
+    elementType: statement.elementType,
+    lowerBound: statement.lowerBound,
+    upperBound: statement.upperBound,
+    values,
+  })
+}
+
+function executeInput(statement: Extract<Statement, { kind: 'input' }>, state: RuntimeState): void {
+  const target = resolveTarget(statement.target, state.variables)
+
+  if (!target.ok) {
+    state.errors.push(target.error)
     return
   }
 
@@ -134,14 +181,14 @@ function executeInput(statement: Extract<Statement, { kind: 'input' }>, state: R
     return
   }
 
-  target.value = converted.value
+  target.setValue(converted.value)
 }
 
 function executeAssignment(statement: Extract<Statement, { kind: 'assign' }>, state: RuntimeState): void {
-  const target = state.variables.get(statement.name)
+  const target = resolveTarget(statement.target, state.variables)
 
-  if (!target) {
-    state.errors.push(`Line ${statement.line}: Variable '${statement.name}' has not been declared.`)
+  if (!target.ok) {
+    state.errors.push(target.error)
     return
   }
 
@@ -152,13 +199,19 @@ function executeAssignment(statement: Extract<Statement, { kind: 'assign' }>, st
   }
 
   if (!canAssign(target.type, evaluated.value)) {
-    state.errors.push(
-      `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${statement.name}'.`,
-    )
+    if (target.arrayName) {
+      state.errors.push(
+        `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} array '${target.arrayName}'.`,
+      )
+    } else {
+      state.errors.push(
+        `Line ${statement.line}: Cannot assign ${valueType(evaluated.value)} to ${target.type} variable '${target.name}'.`,
+      )
+    }
     return
   }
 
-  target.value = evaluated.value
+  target.setValue(evaluated.value)
 }
 
 function executeOutput(statement: Extract<Statement, { kind: 'output' }>, state: RuntimeState): void {
@@ -201,7 +254,7 @@ function executeFor(statement: Extract<Statement, { kind: 'for' }>, state: Runti
     return
   }
 
-  if (counter.type !== 'INTEGER') {
+  if (counter.kind !== 'scalar' || counter.type !== 'INTEGER') {
     state.errors.push(`Line ${statement.line}: FOR counter variable '${statement.counter}' must be INTEGER.`)
     return
   }
@@ -247,14 +300,10 @@ function executeFor(statement: Extract<Statement, { kind: 'for' }>, state: Runti
   counter.value = start.value
 
   while (step.value > 0 ? counter.value <= end.value : counter.value >= end.value) {
-    if (!consumeExecutionStep(statement.line, state)) {
-      return
-    }
+    if (!consumeExecutionStep(statement.line, state)) return
 
     executeStatements(statement.body, state)
-    if (state.errors.length > 0) {
-      return
-    }
+    if (state.errors.length > 0) return
 
     counter.value += step.value
   }
@@ -262,9 +311,7 @@ function executeFor(statement: Extract<Statement, { kind: 'for' }>, state: Runti
 
 function executeWhile(statement: Extract<Statement, { kind: 'while' }>, state: RuntimeState): void {
   while (true) {
-    if (!consumeExecutionStep(statement.line, state)) {
-      return
-    }
+    if (!consumeExecutionStep(statement.line, state)) return
 
     const condition = evaluateExpression(statement.condition, state.variables)
     if (!condition.ok) {
@@ -277,35 +324,23 @@ function executeWhile(statement: Extract<Statement, { kind: 'while' }>, state: R
       return
     }
 
-    if (!condition.value) {
-      return
-    }
+    if (!condition.value) return
 
-    if (!hasExecutionStepsRemaining(statement.line, state)) {
-      return
-    }
+    if (!hasExecutionStepsRemaining(statement.line, state)) return
 
     executeStatements(statement.body, state)
-    if (state.errors.length > 0) {
-      return
-    }
+    if (state.errors.length > 0) return
   }
 }
 
 function executeRepeat(statement: Extract<Statement, { kind: 'repeat' }>, state: RuntimeState): void {
   while (true) {
-    if (!hasExecutionStepsRemaining(statement.line, state)) {
-      return
-    }
+    if (!hasExecutionStepsRemaining(statement.line, state)) return
 
     executeStatements(statement.body, state)
-    if (state.errors.length > 0) {
-      return
-    }
+    if (state.errors.length > 0) return
 
-    if (!consumeExecutionStep(statement.line, state)) {
-      return
-    }
+    if (!consumeExecutionStep(statement.line, state)) return
 
     const condition = evaluateExpression(statement.untilCondition, state.variables)
     if (!condition.ok) {
@@ -318,19 +353,53 @@ function executeRepeat(statement: Extract<Statement, { kind: 'repeat' }>, state:
       return
     }
 
-    if (condition.value) {
-      return
-    }
+    if (condition.value) return
   }
 }
 
-function hasExecutionStepsRemaining(line: number, state: RuntimeState): boolean {
-  if (state.steps >= maxExecutionSteps) {
-    state.errors.push(`Line ${line}: Execution limit exceeded. Possible infinite loop.`)
-    return false
+function resolveTarget(target: AssignmentTarget, variables: Map<string, StoredVariable>): TargetResult {
+  const variable = variables.get(target.name)
+
+  if (!variable) {
+    return { ok: false, error: `Line ${target.line}: Variable '${target.name}' has not been declared.` }
   }
 
-  return true
+  if (target.kind === 'variable') {
+    if (variable.kind === 'array') {
+      return { ok: false, error: `Line ${target.line}: Cannot use array '${target.name}' without an index.` }
+    }
+
+    return {
+      ok: true,
+      name: target.name,
+      type: variable.type,
+      value: variable.value,
+      setValue: (value) => {
+        variable.value = value
+      },
+    }
+  }
+
+  if (variable.kind !== 'array') {
+    return { ok: false, error: `Line ${target.line}: Variable '${target.name}' is not an array.` }
+  }
+
+  const index = evaluateIndex(target.index, variables)
+  if (!index.ok) return index
+
+  const bounds = checkArrayBounds(target.name, variable, index.value, target.line)
+  if (!bounds.ok) return bounds
+
+  return {
+    ok: true,
+    name: `${target.name}[${index.value}]`,
+    type: variable.elementType,
+    value: variable.values.get(index.value)!,
+    arrayName: target.name,
+    setValue: (value) => {
+      variable.values.set(index.value, value)
+    },
+  }
 }
 
 function evaluateExpression(expression: Expression, variables: Map<string, StoredVariable>): EvaluationResult {
@@ -342,51 +411,57 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
     const variable = variables.get(expression.name)
 
     if (!variable) {
-      return {
-        ok: false,
-        error: `Line ${expression.line}: Variable '${expression.name}' has not been declared.`,
-      }
+      return { ok: false, error: `Line ${expression.line}: Variable '${expression.name}' has not been declared.` }
+    }
+
+    if (variable.kind === 'array') {
+      return { ok: false, error: `Line ${expression.line}: Cannot use array '${expression.name}' without an index.` }
     }
 
     return { ok: true, value: variable.value }
   }
 
-  if (expression.kind === 'unary') {
-    const value = evaluateExpression(expression.expression, variables)
-    if (!value.ok) {
-      return value
+  if (expression.kind === 'arrayAccess') {
+    const variable = variables.get(expression.name)
+
+    if (!variable) {
+      return { ok: false, error: `Line ${expression.line}: Variable '${expression.name}' has not been declared.` }
     }
 
-    if (expression.operator === '-') {
-      if (typeof value.value === 'number') {
-        return { ok: true, value: -value.value }
-      }
+    if (variable.kind !== 'array') {
+      return { ok: false, error: `Line ${expression.line}: Variable '${expression.name}' is not an array.` }
+    }
 
-      return {
-        ok: false,
-        error: `Line ${expression.line}: Operator '-' cannot be used with ${valueType(value.value)}.`,
-      }
+    const index = evaluateIndex(expression.index, variables)
+    if (!index.ok) return index
+
+    const bounds = checkArrayBounds(expression.name, variable, index.value, expression.line)
+    if (!bounds.ok) return bounds
+
+    return { ok: true, value: variable.values.get(index.value)! }
+  }
+
+  if (expression.kind === 'unary') {
+    const value = evaluateExpression(expression.expression, variables)
+    if (!value.ok) return value
+
+    if (expression.operator === '-') {
+      if (typeof value.value === 'number') return { ok: true, value: -value.value }
+      return { ok: false, error: `Line ${expression.line}: Operator '-' cannot be used with ${valueType(value.value)}.` }
     }
 
     if (typeof value.value !== 'boolean') {
-      return {
-        ok: false,
-        error: `Line ${expression.line}: Operator 'NOT' cannot be used with ${valueType(value.value)}.`,
-      }
+      return { ok: false, error: `Line ${expression.line}: Operator 'NOT' cannot be used with ${valueType(value.value)}.` }
     }
 
     return { ok: true, value: !value.value }
   }
 
   const left = evaluateExpression(expression.left, variables)
-  if (!left.ok) {
-    return left
-  }
+  if (!left.ok) return left
 
   const right = evaluateExpression(expression.right, variables)
-  if (!right.ok) {
-    return right
-  }
+  if (!right.ok) return right
 
   if (expression.operator === '+') {
     if (typeof left.value === 'string' || typeof right.value === 'string') {
@@ -400,37 +475,17 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
 
   if (expression.operator === '-' || expression.operator === '*' || expression.operator === '/') {
     if (typeof left.value === 'number' && typeof right.value === 'number') {
-      if (expression.operator === '-') {
-        return { ok: true, value: left.value - right.value }
-      }
-
-      if (expression.operator === '*') {
-        return { ok: true, value: left.value * right.value }
-      }
-
-      if (right.value === 0) {
-        return { ok: false, error: `Line ${expression.line}: Division by zero.` }
-      }
-
+      if (expression.operator === '-') return { ok: true, value: left.value - right.value }
+      if (expression.operator === '*') return { ok: true, value: left.value * right.value }
+      if (right.value === 0) return { ok: false, error: `Line ${expression.line}: Division by zero.` }
       return { ok: true, value: left.value / right.value }
     }
   }
 
   if (expression.operator === 'DIV' || expression.operator === 'MOD') {
-    if (
-      typeof left.value === 'number' &&
-      typeof right.value === 'number' &&
-      Number.isInteger(left.value) &&
-      Number.isInteger(right.value)
-    ) {
-      if (right.value === 0) {
-        return { ok: false, error: `Line ${expression.line}: Division by zero.` }
-      }
-
-      if (expression.operator === 'DIV') {
-        return { ok: true, value: Math.trunc(left.value / right.value) }
-      }
-
+    if (isIntegerValue(left.value) && isIntegerValue(right.value)) {
+      if (right.value === 0) return { ok: false, error: `Line ${expression.line}: Division by zero.` }
+      if (expression.operator === 'DIV') return { ok: true, value: Math.trunc(left.value / right.value) }
       return { ok: true, value: left.value % right.value }
     }
   }
@@ -441,10 +496,7 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
 
   if (expression.operator === 'AND' || expression.operator === 'OR') {
     if (typeof left.value === 'boolean' && typeof right.value === 'boolean') {
-      return {
-        ok: true,
-        value: expression.operator === 'AND' ? left.value && right.value : left.value || right.value,
-      }
+      return { ok: true, value: expression.operator === 'AND' ? left.value && right.value : left.value || right.value }
     }
   }
 
@@ -456,40 +508,50 @@ function evaluateExpression(expression: Expression, variables: Map<string, Store
   }
 }
 
+function evaluateIndex(expression: Expression, variables: Map<string, StoredVariable>): { ok: true; value: number } | { ok: false; error: string } {
+  const index = evaluateExpression(expression, variables)
+  if (!index.ok) return index
+
+  if (!isIntegerValue(index.value)) {
+    return { ok: false, error: `Line ${expression.line}: Array index must be INTEGER.` }
+  }
+
+  return { ok: true, value: index.value }
+}
+
+function checkArrayBounds(
+  name: string,
+  variable: ArrayVariable,
+  index: number,
+  line: number,
+): { ok: true } | { ok: false; error: string } {
+  if (index < variable.lowerBound || index > variable.upperBound) {
+    return {
+      ok: false,
+      error: `Line ${line}: Array index ${index} out of bounds for '${name}'. Valid range is ${variable.lowerBound} to ${variable.upperBound}.`,
+    }
+  }
+
+  return { ok: true }
+}
+
 function compareValues(
   left: RuntimeValue,
   right: RuntimeValue,
   operator: '=' | '<>' | '<' | '<=' | '>' | '>=',
   line: number,
 ): EvaluationResult {
-  if (operator === '=') {
-    return { ok: true, value: left === right }
-  }
-
-  if (operator === '<>') {
-    return { ok: true, value: left !== right }
-  }
+  if (operator === '=') return { ok: true, value: left === right }
+  if (operator === '<>') return { ok: true, value: left !== right }
 
   if (typeof left === 'number' && typeof right === 'number') {
-    if (operator === '<') {
-      return { ok: true, value: left < right }
-    }
-
-    if (operator === '<=') {
-      return { ok: true, value: left <= right }
-    }
-
-    if (operator === '>') {
-      return { ok: true, value: left > right }
-    }
-
+    if (operator === '<') return { ok: true, value: left < right }
+    if (operator === '<=') return { ok: true, value: left <= right }
+    if (operator === '>') return { ok: true, value: left > right }
     return { ok: true, value: left >= right }
   }
 
-  return {
-    ok: false,
-    error: `Line ${line}: Operator '${operator}' cannot be used with ${valueType(left)} and ${valueType(right)}.`,
-  }
+  return { ok: false, error: `Line ${line}: Operator '${operator}' cannot be used with ${valueType(left)} and ${valueType(right)}.` }
 }
 
 function consumeExecutionStep(line: number, state: RuntimeState): boolean {
@@ -503,67 +565,48 @@ function consumeExecutionStep(line: number, state: RuntimeState): boolean {
   return true
 }
 
+function hasExecutionStepsRemaining(line: number, state: RuntimeState): boolean {
+  if (state.steps >= maxExecutionSteps) {
+    state.errors.push(`Line ${line}: Execution limit exceeded. Possible infinite loop.`)
+    return false
+  }
+
+  return true
+}
+
 function convertInput(rawInput: string, type: VariableType, line: number): EvaluationResult {
   const text = rawInput.trim()
 
-  if (type === 'STRING') {
-    return { ok: true, value: rawInput }
-  }
+  if (type === 'STRING') return { ok: true, value: rawInput }
 
   if (type === 'INTEGER') {
     const value = Number(text)
-    if (text !== '' && Number.isInteger(value)) {
-      return { ok: true, value }
-    }
-
+    if (text !== '' && Number.isInteger(value)) return { ok: true, value }
     return { ok: false, error: `Line ${line}: Cannot convert input '${rawInput}' to INTEGER.` }
   }
 
   if (type === 'REAL') {
     const value = Number(text)
-    if (text !== '' && Number.isFinite(value)) {
-      return { ok: true, value }
-    }
-
+    if (text !== '' && Number.isFinite(value)) return { ok: true, value }
     return { ok: false, error: `Line ${line}: Cannot convert input '${rawInput}' to REAL.` }
   }
 
-  if (text.toUpperCase() === 'TRUE') {
-    return { ok: true, value: true }
-  }
-
-  if (text.toUpperCase() === 'FALSE') {
-    return { ok: true, value: false }
-  }
+  if (text.toUpperCase() === 'TRUE') return { ok: true, value: true }
+  if (text.toUpperCase() === 'FALSE') return { ok: true, value: false }
 
   return { ok: false, error: `Line ${line}: Cannot convert input '${rawInput}' to BOOLEAN.` }
 }
 
 function defaultValue(type: VariableType): RuntimeValue {
-  if (type === 'STRING') {
-    return ''
-  }
-
-  if (type === 'BOOLEAN') {
-    return false
-  }
-
+  if (type === 'STRING') return ''
+  if (type === 'BOOLEAN') return false
   return 0
 }
 
 function canAssign(type: VariableType, value: RuntimeValue): boolean {
-  if (type === 'INTEGER') {
-    return typeof value === 'number' && Number.isInteger(value)
-  }
-
-  if (type === 'REAL') {
-    return typeof value === 'number'
-  }
-
-  if (type === 'STRING') {
-    return typeof value === 'string'
-  }
-
+  if (type === 'INTEGER') return typeof value === 'number' && Number.isInteger(value)
+  if (type === 'REAL') return typeof value === 'number'
+  if (type === 'STRING') return typeof value === 'string'
   return typeof value === 'boolean'
 }
 
@@ -576,25 +619,27 @@ function isIntegerValue(value: RuntimeValue): value is number {
 }
 
 function valueType(value: RuntimeValue): VariableType {
-  if (typeof value === 'string') {
-    return 'STRING'
-  }
-
-  if (typeof value === 'boolean') {
-    return 'BOOLEAN'
-  }
-
+  if (typeof value === 'string') return 'STRING'
+  if (typeof value === 'boolean') return 'BOOLEAN'
   return Number.isInteger(value) ? 'INTEGER' : 'REAL'
 }
 
 function formatValue(value: RuntimeValue): string {
-  if (typeof value === 'boolean') {
-    return value ? 'TRUE' : 'FALSE'
-  }
-
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
   return String(value)
 }
 
 function toPublicVariables(variables: Map<string, StoredVariable>): Record<string, unknown> {
-  return Object.fromEntries([...variables.entries()].map(([name, variable]) => [name, variable.value]))
+  return Object.fromEntries(
+    [...variables.entries()].map(([name, variable]) => {
+      if (variable.kind === 'scalar') return [name, variable.value]
+
+      return [
+        name,
+        Object.fromEntries(
+          [...variable.values.entries()].map(([index, value]) => [String(index), value]),
+        ),
+      ]
+    }),
+  )
 }

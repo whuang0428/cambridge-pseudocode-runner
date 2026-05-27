@@ -1,5 +1,5 @@
 import { tokenizeExpression } from './tokenizer'
-import type { BinaryOperator, Expression, ParseResult, Statement, Token, VariableType } from './types'
+import type { AssignmentTarget, BinaryOperator, Expression, ParseResult, Statement, Token, VariableType } from './types'
 
 type SourceLine = {
   line: number
@@ -8,15 +8,17 @@ type SourceLine = {
 
 type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'ENDWHILE' | 'UNTIL' | 'EOF'
 
-const declarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
-const inputPattern = /^INPUT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
+const scalarDeclarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
+const arrayDeclarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*ARRAY\s*\[(.+):(.+)]\s+OF\s+([A-Za-z_][A-Za-z0-9_]*)$/i
+const inputPattern = /^INPUT\s+(.+)$/i
 const outputPattern = /^OUTPUT(?:\s+(.+))?$/i
-const assignmentPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s*(.+)$/
+const assignmentPattern = /^(.+?)\s*(?:←|<-)\s*(.+)$/
 const ifPattern = /^IF\s+(.+)\s+THEN$/i
 const nextPattern = /^NEXT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const forPattern = /^FOR\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s+(.+)$/i
 const whilePattern = /^WHILE\s+(.+)$/i
 const untilPattern = /^UNTIL\s+(.+)$/i
+const supportedTypes = new Set(['INTEGER', 'REAL', 'STRING', 'BOOLEAN'])
 
 export function parsePseudocode(code: string): ParseResult {
   const errors: string[] = []
@@ -81,25 +83,11 @@ class StatementParser {
         /^NEXT\b/i.test(sourceLine.text) ||
         /^UNTIL\b/i.test(sourceLine.text)
       ) {
-        if (upper === 'ELSE' && stopTokens.includes('ELSE')) {
-          return statements
-        }
-
-        if (upper === 'ENDIF' && stopTokens.includes('ENDIF')) {
-          return statements
-        }
-
-        if (/^NEXT\b/i.test(sourceLine.text) && stopTokens.includes('NEXT')) {
-          return statements
-        }
-
-        if (upper === 'ENDWHILE' && stopTokens.includes('ENDWHILE')) {
-          return statements
-        }
-
-        if (/^UNTIL\b/i.test(sourceLine.text) && stopTokens.includes('UNTIL')) {
-          return statements
-        }
+        if (upper === 'ELSE' && stopTokens.includes('ELSE')) return statements
+        if (upper === 'ENDIF' && stopTokens.includes('ENDIF')) return statements
+        if (upper === 'ENDWHILE' && stopTokens.includes('ENDWHILE')) return statements
+        if (/^NEXT\b/i.test(sourceLine.text) && stopTokens.includes('NEXT')) return statements
+        if (/^UNTIL\b/i.test(sourceLine.text) && stopTokens.includes('UNTIL')) return statements
 
         return statements
       }
@@ -117,21 +105,34 @@ class StatementParser {
     const sourceLine = this.peek()
     const { line, text } = sourceLine
 
-    const declaration = text.match(declarationPattern)
-    if (declaration) {
+    const scalarDeclaration = text.match(scalarDeclarationPattern)
+    if (scalarDeclaration) {
       this.current += 1
       return {
         kind: 'declare',
-        name: declaration[1],
-        variableType: declaration[2].toUpperCase() as VariableType,
+        name: scalarDeclaration[1],
+        variableType: scalarDeclaration[2].toUpperCase() as VariableType,
         line,
       }
+    }
+
+    const arrayDeclaration = text.match(arrayDeclarationPattern)
+    if (arrayDeclaration) {
+      this.current += 1
+      return parseArrayDeclaration(arrayDeclaration, line, this.errors)
+    }
+
+    if (/^DECLARE\b/i.test(text) && /\bARRAY\b/i.test(text)) {
+      this.current += 1
+      this.errors.push(`Line ${line}: Invalid ARRAY declaration.`)
+      return null
     }
 
     const input = text.match(inputPattern)
     if (input) {
       this.current += 1
-      return { kind: 'input', name: input[1], line }
+      const target = parseAssignmentTarget(input[1], line, this.errors)
+      return target ? { kind: 'input', target, line } : null
     }
 
     const output = text.match(outputPattern)
@@ -150,33 +151,23 @@ class StatementParser {
       return expressions.length > 0 ? { kind: 'output', expressions, line } : null
     }
 
-    const assignment = text.match(assignmentPattern)
-    if (assignment) {
-      this.current += 1
-      const expression = parseExpression(assignment[2], line, this.errors)
-      return expression ? { kind: 'assign', name: assignment[1], expression, line } : null
-    }
-
-    if (/^IF\b/i.test(text)) {
-      return this.parseIfStatement()
-    }
-
-    if (/^FOR\b/i.test(text)) {
-      return this.parseForStatement()
-    }
-
-    if (/^WHILE\b/i.test(text)) {
-      return this.parseWhileStatement()
-    }
-
-    if (/^REPEAT$/i.test(text)) {
-      return this.parseRepeatStatement()
-    }
+    if (/^IF\b/i.test(text)) return this.parseIfStatement()
+    if (/^FOR\b/i.test(text)) return this.parseForStatement()
+    if (/^WHILE\b/i.test(text)) return this.parseWhileStatement()
+    if (/^REPEAT$/i.test(text)) return this.parseRepeatStatement()
 
     if (/^REPEAT\b/i.test(text)) {
       this.current += 1
       this.errors.push(`Line ${line}: Syntax error.`)
       return null
+    }
+
+    const assignment = text.match(assignmentPattern)
+    if (assignment) {
+      this.current += 1
+      const target = parseAssignmentTarget(assignment[1], line, this.errors)
+      const expression = parseExpression(assignment[2], line, this.errors)
+      return target && expression ? { kind: 'assign', target, expression, line } : null
     }
 
     this.current += 1
@@ -196,7 +187,6 @@ class StatementParser {
 
     const condition = parseExpression(match[1], sourceLine.line, this.errors)
     this.current += 1
-
     const thenBranch = this.parseBlock(['ELSE', 'ENDIF'])
     let elseBranch: Statement[] | undefined
 
@@ -221,16 +211,7 @@ class StatementParser {
     }
 
     this.current += 1
-
-    return condition
-      ? {
-          kind: 'if',
-          condition,
-          thenBranch,
-          elseBranch,
-          line: sourceLine.line,
-        }
-      : null
+    return condition ? { kind: 'if', condition, thenBranch, elseBranch, line: sourceLine.line } : null
   }
 
   private parseForStatement(): Statement | null {
@@ -255,7 +236,6 @@ class StatementParser {
     const end = parseExpression(bounds.end, sourceLine.line, this.errors)
     const parsedStep = bounds.step ? parseExpression(bounds.step, sourceLine.line, this.errors) : undefined
     this.current += 1
-
     const body = this.parseBlock(['NEXT'])
 
     if (this.isAtEnd()) {
@@ -279,16 +259,7 @@ class StatementParser {
     }
 
     return start && end && (bounds.step === undefined || parsedStep)
-      ? {
-          kind: 'for',
-          counter,
-          start,
-          end,
-          step: parsedStep ?? undefined,
-          body,
-          line: sourceLine.line,
-          nextLine: nextLine.line,
-        }
+      ? { kind: 'for', counter, start, end, step: parsedStep ?? undefined, body, line: sourceLine.line, nextLine: nextLine.line }
       : null
   }
 
@@ -304,7 +275,6 @@ class StatementParser {
 
     const condition = parseExpression(match[1], sourceLine.line, this.errors)
     this.current += 1
-
     const body = this.parseBlock(['ENDWHILE'])
 
     if (this.isAtEnd()) {
@@ -319,22 +289,12 @@ class StatementParser {
     }
 
     this.current += 1
-
-    return condition
-      ? {
-          kind: 'while',
-          condition,
-          body,
-          line: sourceLine.line,
-          endLine: endLine.line,
-        }
-      : null
+    return condition ? { kind: 'while', condition, body, line: sourceLine.line, endLine: endLine.line } : null
   }
 
   private parseRepeatStatement(): Statement | null {
     const sourceLine = this.peek()
     this.current += 1
-
     const body = this.parseBlock(['UNTIL'])
 
     if (this.isAtEnd()) {
@@ -352,16 +312,7 @@ class StatementParser {
     }
 
     const untilCondition = parseExpression(until[1], untilLine.line, this.errors)
-
-    return untilCondition
-      ? {
-          kind: 'repeat',
-          body,
-          untilCondition,
-          line: sourceLine.line,
-          untilLine: untilLine.line,
-        }
-      : null
+    return untilCondition ? { kind: 'repeat', body, untilCondition, line: sourceLine.line, untilLine: untilLine.line } : null
   }
 
   private peek(): SourceLine {
@@ -373,11 +324,58 @@ class StatementParser {
   }
 }
 
-function splitForBounds(
-  source: string,
-  line: number,
-  errors: string[],
-): { start: string; end: string; step?: string } | null {
+function parseArrayDeclaration(match: RegExpMatchArray, line: number, errors: string[]): Statement | null {
+  const name = match[1]
+  const lowerText = match[2].trim()
+  const upperText = match[3].trim()
+  const elementTypeText = match[4].toUpperCase()
+
+  if (!supportedTypes.has(elementTypeText)) {
+    errors.push(`Line ${line}: Unsupported ARRAY element type '${match[4]}'.`)
+    return null
+  }
+
+  if (!/^-?\d+$/.test(lowerText) || !/^-?\d+$/.test(upperText)) {
+    errors.push(`Line ${line}: ARRAY bounds must be integer literals.`)
+    return null
+  }
+
+  const lowerBound = Number(lowerText)
+  const upperBound = Number(upperText)
+
+  if (lowerBound > upperBound) {
+    errors.push(`Line ${line}: ARRAY lower bound cannot be greater than upper bound.`)
+    return null
+  }
+
+  return {
+    kind: 'declareArray',
+    name,
+    elementType: elementTypeText as VariableType,
+    lowerBound,
+    upperBound,
+    line,
+  }
+}
+
+function parseAssignmentTarget(source: string, line: number, errors: string[]): AssignmentTarget | null {
+  const text = source.trim()
+  const scalar = text.match(/^([A-Za-z_][A-Za-z0-9_]*)$/)
+  if (scalar) {
+    return { kind: 'variable', name: scalar[1], line }
+  }
+
+  const arrayAccess = text.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*\[(.+)]$/)
+  if (arrayAccess) {
+    const index = parseExpression(arrayAccess[2], line, errors)
+    return index ? { kind: 'arrayElement', name: arrayAccess[1], index, line } : null
+  }
+
+  errors.push(`Line ${line}: Invalid expression.`)
+  return null
+}
+
+function splitForBounds(source: string, line: number, errors: string[]): { start: string; end: string; step?: string } | null {
   const toIndex = findKeywordOutsideExpression(source, 'TO')
 
   if (toIndex === -1) {
@@ -411,19 +409,9 @@ function findKeywordOutsideExpression(source: string, keyword: 'TO' | 'STEP'): n
       continue
     }
 
-    if (inString) {
-      continue
-    }
-
-    if (char === '(') {
-      depth += 1
-      continue
-    }
-
-    if (char === ')') {
-      depth -= 1
-      continue
-    }
+    if (inString) continue
+    if (char === '(' || char === '[') depth += 1
+    if (char === ')' || char === ']') depth -= 1
 
     if (depth === 0 && source.slice(index, index + keyword.length).toUpperCase() === keyword) {
       const before = source[index - 1] ?? ' '
@@ -452,13 +440,8 @@ function splitOutputItems(source: string, line: number, errors: string[]): strin
       continue
     }
 
-    if (!inString && char === '(') {
-      depth += 1
-    }
-
-    if (!inString && char === ')') {
-      depth -= 1
-    }
+    if (!inString && (char === '(' || char === '[')) depth += 1
+    if (!inString && (char === ')' || char === ']')) depth -= 1
 
     if (!inString && depth === 0 && char === ',') {
       if (!current.trim()) {
@@ -491,9 +474,7 @@ function parseExpression(source: string, line: number, errors: string[]): Expres
   const tokenized = tokenizeExpression(source, line)
   errors.push(...tokenized.errors)
 
-  if (tokenized.errors.length > 0) {
-    return null
-  }
+  if (tokenized.errors.length > 0) return null
 
   const parser = new ExpressionParser(tokenized.tokens)
   const expression = parser.parse()
@@ -510,37 +491,24 @@ class ExpressionParser {
 
   parse(): Expression {
     const expression = this.parseOr()
-
-    if (!this.isAtEnd()) {
-      this.error(this.peek(), 'Invalid expression.')
-    }
-
+    if (!this.isAtEnd()) this.error(this.peek(), 'Invalid expression.')
     return expression
   }
 
   private parseOr(): Expression {
     let expression = this.parseAnd()
-
-    while (this.matchOperator('OR')) {
-      expression = this.binaryExpression(expression)
-    }
-
+    while (this.matchOperator('OR')) expression = this.binaryExpression(expression)
     return expression
   }
 
   private parseAnd(): Expression {
     let expression = this.parseComparison()
-
-    while (this.matchOperator('AND')) {
-      expression = this.binaryExpression(expression)
-    }
-
+    while (this.matchOperator('AND')) expression = this.binaryExpression(expression)
     return expression
   }
 
   private parseComparison(): Expression {
     let expression = this.parseAddition()
-
     while (
       this.matchOperator('=') ||
       this.matchOperator('<>') ||
@@ -551,54 +519,32 @@ class ExpressionParser {
     ) {
       expression = this.binaryExpression(expression)
     }
-
     return expression
   }
 
   private parseAddition(): Expression {
     let expression = this.parseMultiplication()
-
-    while (this.matchOperator('+') || this.matchOperator('-')) {
-      expression = this.binaryExpression(expression)
-    }
-
+    while (this.matchOperator('+') || this.matchOperator('-')) expression = this.binaryExpression(expression)
     return expression
   }
 
   private parseMultiplication(): Expression {
     let expression = this.parseUnary()
-
-    while (
-      this.matchOperator('*') ||
-      this.matchOperator('/') ||
-      this.matchOperator('DIV') ||
-      this.matchOperator('MOD')
-    ) {
+    while (this.matchOperator('*') || this.matchOperator('/') || this.matchOperator('DIV') || this.matchOperator('MOD')) {
       expression = this.binaryExpression(expression)
     }
-
     return expression
   }
 
   private parseUnary(): Expression {
     if (this.matchOperator('NOT')) {
       const operator = this.previous()
-      return {
-        kind: 'unary',
-        operator: 'NOT',
-        expression: this.parseUnary(),
-        line: operator.line,
-      }
+      return { kind: 'unary', operator: 'NOT', expression: this.parseUnary(), line: operator.line }
     }
 
     if (this.matchOperator('-')) {
       const operator = this.previous()
-      return {
-        kind: 'unary',
-        operator: '-',
-        expression: this.parseUnary(),
-        line: operator.line,
-      }
+      return { kind: 'unary', operator: '-', expression: this.parseUnary(), line: operator.line }
     }
 
     return this.parsePrimary()
@@ -612,58 +558,41 @@ class ExpressionParser {
 
     if (this.match('identifier')) {
       const token = this.previous()
+      if (this.match('leftBracket')) {
+        const index = this.parseOr()
+        if (!this.match('rightBracket')) this.error(token, 'Invalid expression.')
+        return { kind: 'arrayAccess', name: token.lexeme, index, line: token.line }
+      }
+
       return { kind: 'variable', name: token.lexeme, line: token.line }
     }
 
     if (this.match('leftParen')) {
       const opening = this.previous()
       const expression = this.parseOr()
-
-      if (!this.match('rightParen')) {
-        this.error(opening, 'Invalid expression.')
-      }
-
+      if (!this.match('rightParen')) this.error(opening, 'Invalid expression.')
       return expression
     }
 
     const token = this.peek()
     this.error(token, 'Invalid expression.')
-    if (!this.isAtEnd()) {
-      this.advance()
-    }
+    if (!this.isAtEnd()) this.advance()
     return { kind: 'literal', value: 0, line: token.line }
   }
 
   private binaryExpression(left: Expression): Expression {
     const operator = this.previous()
     const right = this.parsePrecedenceAfter(operator.lexeme)
-
-    return {
-      kind: 'binary',
-      operator: operator.lexeme as BinaryOperator,
-      left,
-      right,
-      line: operator.line,
-    }
+    return { kind: 'binary', operator: operator.lexeme as BinaryOperator, left, right, line: operator.line }
   }
 
   private parsePrecedenceAfter(operator: string): Expression {
-    if (operator === 'OR') {
-      return this.parseAnd()
-    }
-
-    if (operator === 'AND') {
-      return this.parseComparison()
-    }
-
+    if (operator === 'OR') return this.parseAnd()
+    if (operator === 'AND') return this.parseComparison()
     if (operator === '=' || operator === '<>' || operator === '<' || operator === '<=' || operator === '>' || operator === '>=') {
       return this.parseAddition()
     }
-
-    if (operator === '+' || operator === '-') {
-      return this.parseMultiplication()
-    }
-
+    if (operator === '+' || operator === '-') return this.parseMultiplication()
     return this.parseUnary()
   }
 
@@ -672,7 +601,6 @@ class ExpressionParser {
       this.advance()
       return true
     }
-
     return false
   }
 
@@ -681,7 +609,6 @@ class ExpressionParser {
       this.advance()
       return true
     }
-
     return false
   }
 
@@ -690,10 +617,7 @@ class ExpressionParser {
   }
 
   private advance(): Token {
-    if (!this.isAtEnd()) {
-      this.current += 1
-    }
-
+    if (!this.isAtEnd()) this.current += 1
     return this.previous()
   }
 

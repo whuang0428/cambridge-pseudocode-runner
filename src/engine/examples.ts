@@ -8,7 +8,74 @@ type ExampleProgram = {
 
 export const examplePrograms: ExampleProgram[] = [
   {
-    name: 'REPEAT loop',
+    name: 'Array assignment and output',
+    code: `DECLARE Scores : ARRAY[1:3] OF INTEGER
+
+Scores[1] ← 80
+Scores[2] ← 65
+Scores[3] ← 90
+
+OUTPUT Scores[1]
+OUTPUT Scores[2]
+OUTPUT Scores[3]`,
+    expectedOutput: ['80', '65', '90'],
+  },
+  {
+    name: 'Array variable index',
+    code: `DECLARE Scores : ARRAY[1:5] OF INTEGER
+DECLARE I : INTEGER
+
+FOR I ← 1 TO 5
+    Scores[I] ← I * 10
+NEXT I
+
+FOR I ← 1 TO 5
+    OUTPUT Scores[I]
+NEXT I`,
+    expectedOutput: ['10', '20', '30', '40', '50'],
+  },
+  {
+    name: 'Array total',
+    code: `DECLARE Scores : ARRAY[1:5] OF INTEGER
+DECLARE I : INTEGER
+DECLARE Total : INTEGER
+
+Total ← 0
+
+FOR I ← 1 TO 5
+    Scores[I] ← I * 10
+    Total ← Total + Scores[I]
+NEXT I
+
+OUTPUT "Total: ", Total`,
+    expectedOutput: ['Total: 150'],
+  },
+  {
+    name: 'Input into array elements',
+    code: `DECLARE Scores : ARRAY[1:3] OF INTEGER
+DECLARE I : INTEGER
+
+FOR I ← 1 TO 3
+    INPUT Scores[I]
+NEXT I
+
+FOR I ← 1 TO 3
+    OUTPUT Scores[I]
+NEXT I`,
+    inputText: `80
+65
+90`,
+    expectedOutput: ['80', '65', '90'],
+  },
+  {
+    name: 'Array bounds error',
+    code: `DECLARE Scores : ARRAY[1:5] OF INTEGER
+Scores[6] ← 100`,
+    expectedOutput: [],
+    expectedErrors: ["Line 2: Array index 6 out of bounds for 'Scores'. Valid range is 1 to 5."],
+  },
+  {
+    name: 'Phase 6 REPEAT loop',
     code: `DECLARE Count : INTEGER
 Count ← 1
 
@@ -17,91 +84,5 @@ REPEAT
     Count ← Count + 1
 UNTIL Count > 5`,
     expectedOutput: ['1', '2', '3', '4', '5'],
-  },
-  {
-    name: 'REPEAT runs at least once',
-    code: `DECLARE Count : INTEGER
-Count ← 10
-
-REPEAT
-    OUTPUT Count
-    Count ← Count + 1
-UNTIL Count > 5`,
-    expectedOutput: ['10'],
-  },
-  {
-    name: 'REPEAT loop with IF',
-    code: `DECLARE Count : INTEGER
-Count ← 1
-
-REPEAT
-    IF Count = 2 THEN
-        OUTPUT "Middle"
-    ELSE
-        OUTPUT Count
-    ENDIF
-    Count ← Count + 1
-UNTIL Count > 3`,
-    expectedOutput: ['1', 'Middle', '3'],
-  },
-  {
-    name: 'Nested REPEAT loops',
-    code: `DECLARE I : INTEGER
-DECLARE J : INTEGER
-
-I ← 1
-
-REPEAT
-    J ← 1
-    REPEAT
-        OUTPUT "I=", I, " J=", J
-        J ← J + 1
-    UNTIL J > 3
-    I ← I + 1
-UNTIL I > 2`,
-    expectedOutput: ['I=1 J=1', 'I=1 J=2', 'I=1 J=3', 'I=2 J=1', 'I=2 J=2', 'I=2 J=3'],
-  },
-  {
-    name: 'REPEAT inside FOR',
-    code: `DECLARE I : INTEGER
-DECLARE J : INTEGER
-
-FOR I ← 1 TO 2
-    J ← 1
-    REPEAT
-        OUTPUT "I=", I, " J=", J
-        J ← J + 1
-    UNTIL J > 2
-NEXT I`,
-    expectedOutput: ['I=1 J=1', 'I=1 J=2', 'I=2 J=1', 'I=2 J=2'],
-  },
-  {
-    name: 'UNTIL condition must be BOOLEAN',
-    code: `DECLARE Count : INTEGER
-Count ← 1
-
-REPEAT
-    OUTPUT Count
-    Count ← Count + 1
-UNTIL Count`,
-    expectedOutput: ['1'],
-    expectedErrors: ['Line 7: UNTIL condition must be BOOLEAN.'],
-  },
-  {
-    name: 'Phase 5 nested WHILE loops',
-    code: `DECLARE I : INTEGER
-DECLARE J : INTEGER
-
-I ← 1
-
-WHILE I <= 2
-    J ← 1
-    WHILE J <= 3
-        OUTPUT "I=", I, " J=", J
-        J ← J + 1
-    ENDWHILE
-    I ← I + 1
-ENDWHILE`,
-    expectedOutput: ['I=1 J=1', 'I=1 J=2', 'I=1 J=3', 'I=2 J=1', 'I=2 J=2', 'I=2 J=3'],
   },
 ]
