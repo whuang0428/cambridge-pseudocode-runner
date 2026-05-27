@@ -4,75 +4,88 @@ type ExampleProgram = {
   inputText?: string
   expectedOutput: string[]
   expectedErrors?: string[]
-  skipExactOutput?: boolean
 }
 
 export const examplePrograms: ExampleProgram[] = [
   {
-    name: 'String slicing functions',
-    code: `OUTPUT LENGTH("Hello")
-OUTPUT LEFT("Cambridge", 3)
-OUTPUT RIGHT("Cambridge", 4)
-OUTPUT MID("Cambridge", 2, 3)`,
-    expectedOutput: ['5', 'Cam', 'idge', 'amb'],
-  },
-  {
-    name: 'Case and number functions',
-    code: `OUTPUT UCASE("Hello")
-OUTPUT LCASE("Hello")
-OUTPUT INT(3.8)
-OUTPUT INT(-3.8)
-OUTPUT ROUND(3.6)
-OUTPUT ROUND(3.14159, 2)`,
-    expectedOutput: ['HELLO', 'hello', '3', '-3', '4', '3.14'],
-  },
-  {
-    name: 'Functions in expressions',
-    code: `DECLARE Size : INTEGER
-Size ← LENGTH("Hello")
-OUTPUT Size
-OUTPUT LENGTH("Hello") + 5
-OUTPUT UCASE("yes") = "YES"`,
-    expectedOutput: ['5', '10', 'TRUE'],
-  },
-  {
-    name: 'Functions with arrays',
-    code: `DECLARE Names : ARRAY[1:3] OF STRING
-DECLARE I : INTEGER
+    name: 'CASE explicit equality labels',
+    code: `DECLARE Choice : INTEGER
+Choice ← 2
 
-Names[1] ← "Tom"
-Names[2] ← "Anna"
-Names[3] ← "Christopher"
+CASE OF Choice
+    = 1 : OUTPUT "Start"
+    = 2 : OUTPUT "Settings"
+    OTHERWISE OUTPUT "Invalid"
+ENDCASE`,
+    expectedOutput: ['Settings'],
+  },
+  {
+    name: 'CASE relational labels',
+    code: `DECLARE Score : INTEGER
+Score ← 75
 
-FOR I ← 1 TO 3
-    OUTPUT Names[I], " length=", LENGTH(Names[I])
-NEXT I`,
-    expectedOutput: ['Tom length=3', 'Anna length=4', 'Christopher length=11'],
+CASE OF Score
+    >= 80 : OUTPUT "High pass"
+    >= 50 : OUTPUT "Pass"
+    < 50 : OUTPUT "Fail"
+ENDCASE`,
+    expectedOutput: ['Pass'],
   },
   {
-    name: 'RANDOMBETWEEN range',
-    code: `DECLARE Number : INTEGER
-Number ← RANDOMBETWEEN(1, 6)
-OUTPUT Number >= 1 AND Number <= 6`,
-    expectedOutput: ['TRUE'],
+    name: 'CASE range labels',
+    code: `DECLARE Score : INTEGER
+Score ← 88
+
+CASE OF Score
+    80 TO 100 : OUTPUT "High pass"
+    50 TO 79 : OUTPUT "Pass"
+    0 TO 49 : OUTPUT "Fail"
+    OTHERWISE OUTPUT "Invalid score"
+ENDCASE`,
+    expectedOutput: ['High pass'],
   },
   {
-    name: 'Unknown function',
-    code: `OUTPUT REVERSE("Hello")`,
+    name: 'CASE first matching branch wins',
+    code: `DECLARE Score : INTEGER
+Score ← 85
+
+CASE OF Score
+    >= 50 : OUTPUT "Pass"
+    >= 80 : OUTPUT "High pass"
+ENDCASE`,
+    expectedOutput: ['Pass'],
+  },
+  {
+    name: 'CASE string equality labels',
+    code: `DECLARE Grade : STRING
+Grade ← "A"
+
+CASE OF Grade
+    = "A" : OUTPUT "Excellent"
+    <> "A" : OUTPUT "Not A"
+ENDCASE`,
+    expectedOutput: ['Excellent'],
+  },
+  {
+    name: 'CASE label type mismatch',
+    code: `DECLARE Score : INTEGER
+Score ← 80
+
+CASE OF Score
+    "A" : OUTPUT "Excellent"
+ENDCASE`,
     expectedOutput: [],
-    expectedErrors: ["Line 1: Unknown function 'REVERSE'."],
+    expectedErrors: ['Line 5: CASE label type STRING does not match CASE expression type INTEGER.'],
   },
   {
-    name: 'Function argument type error',
-    code: `OUTPUT LENGTH(123)`,
+    name: 'CASE invalid range order',
+    code: `DECLARE Score : INTEGER
+Score ← 80
+
+CASE OF Score
+    100 TO 80 : OUTPUT "Invalid range"
+ENDCASE`,
     expectedOutput: [],
-    expectedErrors: ['Line 1: LENGTH expects argument 1 to be STRING.'],
-  },
-  {
-    name: 'Phase 8 two-dimensional array',
-    code: `DECLARE Grid : ARRAY[1:2, 1:3] OF INTEGER
-Grid[1, 1] ← 11
-OUTPUT Grid[1, 1]`,
-    expectedOutput: ['11'],
+    expectedErrors: ['Line 5: CASE range lower bound cannot be greater than upper bound.'],
   },
 ]

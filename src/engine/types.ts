@@ -147,6 +147,38 @@ export type Statement =
       line: number
       untilLine: number
     }
+  | {
+      kind: 'case'
+      expression: Expression
+      branches: CaseBranch[]
+      otherwiseBranch?: Statement[]
+      line: number
+    }
+
+export type CaseBranch = {
+  label: CaseLabel
+  statements: Statement[]
+  line: number
+}
+
+export type CaseLabel =
+  | {
+      kind: 'literal'
+      value: RuntimeValue
+      line: number
+    }
+  | {
+      kind: 'comparison'
+      operator: '=' | '<>' | '<' | '<=' | '>' | '>='
+      value: Extract<Expression, { kind: 'literal' }>
+      line: number
+    }
+  | {
+      kind: 'range'
+      lower: Extract<Expression, { kind: 'literal' }>
+      upper: Extract<Expression, { kind: 'literal' }>
+      line: number
+    }
 
 export type AssignmentTarget =
   | {

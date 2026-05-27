@@ -1,8 +1,18 @@
 import { tokenizeExpression } from './tokenizer'
-import type { AssignmentTarget, BinaryOperator, Expression, ParseResult, Statement, Token, VariableType } from './types'
+import type {
+  AssignmentTarget,
+  BinaryOperator,
+  CaseBranch,
+  CaseLabel,
+  Expression,
+  ParseResult,
+  Statement,
+  Token,
+  VariableType,
+} from './types'
 
 type SourceLine = { line: number; text: string }
-type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'ENDWHILE' | 'UNTIL'
+type StopToken = 'ELSE' | 'ENDIF' | 'NEXT' | 'ENDWHILE' | 'UNTIL' | 'OTHERWISE' | 'ENDCASE' | 'CASE_LABEL'
 
 const scalarDeclarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(INTEGER|REAL|STRING|BOOLEAN)$/i
 const arrayDeclarationPattern = /^DECLARE\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*ARRAY\s*\[(.+)]\s+OF\s+([A-Za-z_][A-Za-z0-9_]*)$/i
@@ -14,6 +24,8 @@ const nextPattern = /^NEXT\s+([A-Za-z_][A-Za-z0-9_]*)$/i
 const forPattern = /^FOR\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:←|<-)\s+(.+)$/i
 const whilePattern = /^WHILE\s+(.+)$/i
 const untilPattern = /^UNTIL\s+(.+)$/i
+const casePattern = /^CASE\s+OF\s+(.+)$/i
+const otherwisePattern = /^OTHERWISE(?:\s+(.+))?$/i
 const supportedTypes = new Set(['INTEGER', 'REAL', 'STRING', 'BOOLEAN'])
 
 export function parsePseudocode(code: string): ParseResult {
@@ -46,6 +58,8 @@ class StatementParser {
       if (upper === 'ELSE') this.errors.push(`Line ${sourceLine.line}: ELSE without matching IF.`)
       else if (upper === 'ENDIF') this.errors.push(`Line ${sourceLine.line}: ENDIF without matching IF.`)
       else if (upper === 'ENDWHILE') this.errors.push(`Line ${sourceLine.line}: ENDWHILE without matching WHILE.`)
+      else if (upper === 'ENDCASE') this.errors.push(`Line ${sourceLine.line}: ENDCASE without matching CASE.`)
+      else if (/^OTHERWISE\b/i.test(sourceLine.text)) this.errors.push(`Line ${sourceLine.line}: OTHERWISE without matching CASE.`)
       else if (/^UNTIL\b/i.test(sourceLine.text)) this.errors.push(`Line ${sourceLine.line}: UNTIL without matching REPEAT.`)
       else if (/^NEXT\b/i.test(sourceLine.text)) this.errors.push(`Line ${sourceLine.line}: NEXT without matching FOR.`)
       else this.errors.push(`Line ${sourceLine.line}: Syntax error.`)
@@ -56,7 +70,7 @@ class StatementParser {
     return statements
   }
 
-  private parseBlock(stopTokens: StopToken[]): Statement[] {
+  parseBlock(stopTokens: StopToken[]): Statement[] {
     const statements: Statement[] = []
 
     while (!this.isAtEnd()) {
@@ -67,14 +81,20 @@ class StatementParser {
         upper === 'ELSE' ||
         upper === 'ENDIF' ||
         upper === 'ENDWHILE' ||
+        upper === 'ENDCASE' ||
+        /^OTHERWISE\b/i.test(sourceLine.text) ||
         /^NEXT\b/i.test(sourceLine.text) ||
-        /^UNTIL\b/i.test(sourceLine.text)
+        /^UNTIL\b/i.test(sourceLine.text) ||
+        isPotentialCaseLabel(sourceLine.text)
       ) {
         if (upper === 'ELSE' && stopTokens.includes('ELSE')) return statements
         if (upper === 'ENDIF' && stopTokens.includes('ENDIF')) return statements
         if (upper === 'ENDWHILE' && stopTokens.includes('ENDWHILE')) return statements
+        if (upper === 'ENDCASE' && stopTokens.includes('ENDCASE')) return statements
+        if (/^OTHERWISE\b/i.test(sourceLine.text) && stopTokens.includes('OTHERWISE')) return statements
         if (/^NEXT\b/i.test(sourceLine.text) && stopTokens.includes('NEXT')) return statements
         if (/^UNTIL\b/i.test(sourceLine.text) && stopTokens.includes('UNTIL')) return statements
+        if (isPotentialCaseLabel(sourceLine.text) && stopTokens.includes('CASE_LABEL')) return statements
         return statements
       }
 
@@ -136,6 +156,7 @@ class StatementParser {
     if (/^FOR\b/i.test(text)) return this.parseForStatement()
     if (/^WHILE\b/i.test(text)) return this.parseWhileStatement()
     if (/^REPEAT$/i.test(text)) return this.parseRepeatStatement()
+    if (/^CASE\b/i.test(text)) return this.parseCaseStatement()
     if (/^REPEAT\b/i.test(text)) {
       this.current += 1
       this.errors.push(`Line ${line}: Syntax error.`)
@@ -285,6 +306,85 @@ class StatementParser {
     return untilCondition ? { kind: 'repeat', body, untilCondition, line: sourceLine.line, untilLine: untilLine.line } : null
   }
 
+  private parseCaseStatement(): Statement | null {
+    const sourceLine = this.peek()
+    const match = sourceLine.text.match(casePattern)
+
+    if (!match || !match[1].trim()) {
+      this.errors.push(`Line ${sourceLine.line}: Invalid CASE statement.`)
+      this.current += 1
+      this.skipToEndCase()
+      return null
+    }
+
+    const expression = parseExpression(match[1], sourceLine.line, this.errors)
+    this.current += 1
+    const branches: CaseBranch[] = []
+    let otherwiseBranch: Statement[] | undefined
+
+    while (!this.isAtEnd()) {
+      const currentLine = this.peek()
+      const upper = currentLine.text.toUpperCase()
+
+      if (upper === 'ENDCASE') {
+        this.current += 1
+        return expression ? { kind: 'case', expression, branches, otherwiseBranch, line: sourceLine.line } : null
+      }
+
+      if (otherwiseBranch) {
+        if (/^OTHERWISE\b/i.test(currentLine.text)) {
+          this.errors.push(`Line ${currentLine.line}: CASE statement cannot have more than one OTHERWISE branch.`)
+        } else {
+          this.errors.push(`Line ${currentLine.line}: OTHERWISE must be the last branch in a CASE statement.`)
+        }
+        this.current += 1
+        continue
+      }
+
+      if (/^OTHERWISE\b/i.test(currentLine.text)) {
+        otherwiseBranch = this.parseOtherwiseBranch()
+        continue
+      }
+
+      const branch = this.parseCaseBranch()
+      if (branch) branches.push(branch)
+    }
+
+    this.errors.push(`Line ${sourceLine.line}: Missing ENDCASE for CASE statement.`)
+    return null
+  }
+
+  private parseCaseBranch(): CaseBranch | null {
+    const sourceLine = this.peek()
+    const split = splitCaseLabel(sourceLine.text)
+
+    if (!split) {
+      this.errors.push(`Line ${sourceLine.line}: CASE label must end with ':'.`)
+      this.current += 1
+      return null
+    }
+
+    const label = parseCaseLabel(split.label, sourceLine.line, this.errors)
+
+    this.current += 1
+    const statements = split.statement
+      ? parseInlineStatement(split.statement, sourceLine.line, this.errors)
+      : this.parseBlock(['CASE_LABEL', 'OTHERWISE', 'ENDCASE'])
+
+    return label ? { label, statements, line: sourceLine.line } : null
+  }
+
+  private parseOtherwiseBranch(): Statement[] {
+    const sourceLine = this.peek()
+    const otherwise = sourceLine.text.match(otherwisePattern)
+    this.current += 1
+
+    if (!otherwise) return []
+    return otherwise[1]?.trim()
+      ? parseInlineStatement(otherwise[1], sourceLine.line, this.errors)
+      : this.parseBlock(['CASE_LABEL', 'OTHERWISE', 'ENDCASE'])
+  }
+
   private peek(): SourceLine {
     return this.lines[this.current]
   }
@@ -292,6 +392,94 @@ class StatementParser {
   private isAtEnd(): boolean {
     return this.current >= this.lines.length
   }
+
+  private skipToEndCase(): void {
+    while (!this.isAtEnd()) {
+      if (this.peek().text.toUpperCase() === 'ENDCASE') {
+        this.current += 1
+        return
+      }
+      this.current += 1
+    }
+  }
+}
+
+function parseInlineStatement(text: string, line: number, errors: string[]): Statement[] {
+  return new StatementParser([{ line, text: text.trim() }], errors).parseBlock([])
+}
+
+function splitCaseLabel(text: string): { label: string; statement?: string } | null {
+  let inString = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (char === '"') inString = !inString
+    if (!inString && char === ':') {
+      const label = text.slice(0, index).trim()
+      const statement = text.slice(index + 1).trim()
+      return label ? { label, statement: statement || undefined } : null
+    }
+  }
+
+  return null
+}
+
+function isPotentialCaseLabel(text: string): boolean {
+  const trimmed = text.trim()
+  return /^(?:=|<>|<=|>=|<|>)?\s*("[^"]*"|-?\d+(?:\.\d+)?|TRUE|FALSE|[A-Za-z_][A-Za-z0-9_]*)(?:\s+TO\s+("[^"]*"|-?\d+(?:\.\d+)?|TRUE|FALSE|[A-Za-z_][A-Za-z0-9_]*))?\s*:/i.test(trimmed)
+}
+
+function parseCaseLabel(source: string, line: number, errors: string[]): CaseLabel | null {
+  const text = source.trim()
+  const comparison = text.match(/^(=|<>|<=|>=|<|>)\s*(.+)$/)
+
+  if (comparison) {
+    const value = parseLiteralCaseExpression(comparison[2], line, errors)
+    if (!value) {
+      errors.push(`Line ${line}: Invalid CASE comparison label.`)
+      return null
+    }
+
+    return {
+      kind: 'comparison',
+      operator: comparison[1] as Extract<CaseLabel, { kind: 'comparison' }>['operator'],
+      value,
+      line,
+    }
+  }
+
+  if (/^(=|<>|<=|>=|<|>)\s*$/.test(text)) {
+    errors.push(`Line ${line}: Invalid CASE comparison label.`)
+    return null
+  }
+
+  const toIndex = findKeywordOutsideExpression(text, 'TO')
+  if (toIndex !== -1) {
+    const lowerText = text.slice(0, toIndex).trim()
+    const upperText = text.slice(toIndex + 2).trim()
+    const lower = parseLiteralCaseExpression(lowerText, line, errors)
+    const upper = parseLiteralCaseExpression(upperText, line, errors)
+
+    if (!lower || !upper) {
+      errors.push(`Line ${line}: Invalid CASE range label.`)
+      return null
+    }
+
+    return { kind: 'range', lower, upper, line }
+  }
+
+  const label = parseExpression(text, line, errors)
+  if (label && label.kind !== 'literal') {
+    errors.push(`Line ${line}: CASE label must be a literal value.`)
+    return null
+  }
+
+  return label?.kind === 'literal' ? { kind: 'literal', value: label.value, line } : null
+}
+
+function parseLiteralCaseExpression(source: string, line: number, errors: string[]): Extract<Expression, { kind: 'literal' }> | null {
+  const expression = parseExpression(source, line, errors)
+  return expression?.kind === 'literal' ? expression : null
 }
 
 function parseArrayDeclaration(match: RegExpMatchArray, line: number, errors: string[]): Statement | null {

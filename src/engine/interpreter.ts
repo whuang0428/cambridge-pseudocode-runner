@@ -1,4 +1,4 @@
-import type { AssignmentTarget, Expression, RuntimeValue, RunResult, Statement, VariableType } from './types'
+import type { AssignmentTarget, CaseLabel, Expression, RuntimeValue, RunResult, Statement, VariableType } from './types'
 
 const maxExecutionSteps = 100000
 
@@ -122,6 +122,11 @@ function executeStatement(statement: Statement, state: RuntimeState): void {
 
   if (statement.kind === 'repeat') {
     executeRepeat(statement, state)
+    return
+  }
+
+  if (statement.kind === 'case') {
+    executeCase(statement, state)
     return
   }
 
@@ -367,6 +372,105 @@ function executeRepeat(statement: Extract<Statement, { kind: 'repeat' }>, state:
 
     if (condition.value) return
   }
+}
+
+function executeCase(statement: Extract<Statement, { kind: 'case' }>, state: RuntimeState): void {
+  const selector = evaluateExpression(statement.expression, state.variables)
+
+  if (!selector.ok) {
+    state.errors.push(selector.error)
+    return
+  }
+
+  for (const branch of statement.branches) {
+    const match = matchesCaseLabel(selector.value, branch.label)
+    if (!match.ok) {
+      state.errors.push(match.error)
+      return
+    }
+
+    if (match.value) {
+      executeStatements(branch.statements, state)
+      return
+    }
+  }
+
+  if (statement.otherwiseBranch) {
+    executeStatements(statement.otherwiseBranch, state)
+  }
+}
+
+function matchesCaseLabel(selector: RuntimeValue, label: CaseLabel): EvaluationResult {
+  if (label.kind === 'literal') {
+    const compatible = checkCaseLabelType(selector, label.value, label.line, 'CASE label type')
+    if (!compatible.ok) return compatible
+    return { ok: true, value: selector === label.value }
+  }
+
+  if (label.kind === 'comparison') {
+    const compatible = checkCaseLabelType(selector, label.value.value, label.line, 'CASE label type')
+    if (!compatible.ok) return compatible
+
+    if (label.operator === '=') return { ok: true, value: selector === label.value.value }
+    if (label.operator === '<>') return { ok: true, value: selector !== label.value.value }
+
+    if (typeof selector === 'string') {
+      return { ok: false, error: `Line ${label.line}: Operator '${label.operator}' is not supported for STRING CASE labels.` }
+    }
+
+    if (typeof selector === 'boolean') {
+      return { ok: false, error: `Line ${label.line}: Operator '${label.operator}' is not supported for BOOLEAN CASE labels.` }
+    }
+
+    const labelValue = label.value.value
+    if (typeof labelValue !== 'number') {
+      return { ok: false, error: `Line ${label.line}: Operator '${label.operator}' is not supported for ${valueType(labelValue)} CASE labels.` }
+    }
+
+    if (label.operator === '<') return { ok: true, value: selector < labelValue }
+    if (label.operator === '<=') return { ok: true, value: selector <= labelValue }
+    if (label.operator === '>') return { ok: true, value: selector > labelValue }
+    return { ok: true, value: selector >= labelValue }
+  }
+
+  if (typeof label.lower.value !== 'number' || typeof label.upper.value !== 'number') {
+    return {
+      ok: false,
+      error: `Line ${label.line}: CASE range labels only support INTEGER and REAL values.`,
+    }
+  }
+
+  const compatible = checkCaseLabelType(selector, label.lower.value, label.line, 'CASE range label type')
+  if (!compatible.ok) return compatible
+
+  if (label.lower.value > label.upper.value) {
+    return { ok: false, error: `Line ${label.line}: CASE range lower bound cannot be greater than upper bound.` }
+  }
+
+  if (typeof selector !== 'number') {
+    return {
+      ok: false,
+      error: `Line ${label.line}: CASE range label type ${valueType(label.lower.value)} does not match CASE expression type ${valueType(selector)}.`,
+    }
+  }
+
+  return { ok: true, value: selector >= label.lower.value && selector <= label.upper.value }
+}
+
+function checkCaseLabelType(
+  selector: RuntimeValue,
+  labelValue: RuntimeValue,
+  line: number,
+  prefix: 'CASE label type' | 'CASE range label type',
+): { ok: true } | { ok: false; error: string } {
+  const selectorType = valueType(selector)
+  const labelType = valueType(labelValue)
+
+  if (selectorType === labelType || (typeof selector === 'number' && typeof labelValue === 'number')) {
+    return { ok: true }
+  }
+
+  return { ok: false, error: `Line ${line}: ${prefix} ${labelType} does not match CASE expression type ${selectorType}.` }
 }
 
 function resolveTarget(target: AssignmentTarget, variables: Map<string, StoredVariable>): TargetResult {

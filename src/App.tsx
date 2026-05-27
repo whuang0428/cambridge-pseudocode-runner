@@ -1,24 +1,29 @@
 import { useState } from 'react'
 import { runPseudocode } from './engine/runPseudocode'
 
-const defaultCode = `DECLARE Names : ARRAY[1:3] OF STRING
-DECLARE I : INTEGER
+const defaultCode = `DECLARE Score : INTEGER
+INPUT Score
 
-Names[1] ← "Tom"
-Names[2] ← "Anna"
-Names[3] ← "Christopher"
+CASE OF Score
+    80 TO 100 :
+        OUTPUT "High pass"
+    50 TO 79 :
+        OUTPUT "Pass"
+    0 TO 49 :
+        OUTPUT "Fail"
+    OTHERWISE
+        OUTPUT "Invalid score"
+ENDCASE
 
-FOR I ← 1 TO 3
-    OUTPUT Names[I], " length=", LENGTH(Names[I])
-NEXT I
+CASE OF Score
+    >= 90 : OUTPUT "Grade A"
+    >= 80 : OUTPUT "Grade B"
+    >= 70 : OUTPUT "Grade C"
+    >= 60 : OUTPUT "Grade D"
+    < 60 : OUTPUT "Needs improvement"
+ENDCASE`
 
-OUTPUT LEFT("Cambridge", 3)
-OUTPUT RIGHT("Cambridge", 4)
-OUTPUT MID("Cambridge", 2, 3)
-OUTPUT UCASE("exam")
-OUTPUT ROUND(3.14159, 2)`
-
-const defaultInput = ''
+const defaultInput = '85'
 
 type Mode = 'igcse' | 'alevel'
 
@@ -114,7 +119,7 @@ function App() {
       </section>
 
       <p className="phase-note">
-        Phase 9 prototype. Supports built-in functions, arrays, loops, IF blocks, input, output, assignments, expressions, and boolean logic.
+        Phase 10.5 prototype. Supports enhanced CASE labels, built-in functions, arrays, loops, IF blocks, input, output, assignments, expressions, and boolean logic.
       </p>
     </main>
   )
