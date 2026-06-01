@@ -8,84 +8,85 @@ type ExampleProgram = {
 
 export const examplePrograms: ExampleProgram[] = [
   {
-    name: 'CASE explicit equality labels',
-    code: `DECLARE Choice : INTEGER
-Choice ← 2
+    name: 'Comments and equals assignment',
+    code: `# This program adds two numbers
+DECLARE A : INTEGER
+DECLARE B : INTEGER
 
-CASE OF Choice
-    = 1 : OUTPUT "Start"
-    = 2 : OUTPUT "Settings"
-    OTHERWISE OUTPUT "Invalid"
-ENDCASE`,
-    expectedOutput: ['Settings'],
+A <- 3
+B = 5
+
+OUTPUT "Total: ", A + B // print total`,
+    expectedOutput: ['Total: 8'],
   },
   {
-    name: 'CASE relational labels',
-    code: `DECLARE Score : INTEGER
-Score ← 75
+    name: 'Lowercase keywords and optional THEN',
+    code: `declare number : integer
+number = 5
 
-CASE OF Score
-    >= 80 : OUTPUT "High pass"
-    >= 50 : OUTPUT "Pass"
-    < 50 : OUTPUT "Fail"
-ENDCASE`,
-    expectedOutput: ['Pass'],
+if number = 5
+    output "Five"
+end if`,
+    expectedOutput: ['Five'],
   },
   {
-    name: 'CASE range labels',
-    code: `DECLARE Score : INTEGER
-Score ← 88
+    name: 'NEXT without counter',
+    code: `DECLARE I : INTEGER
 
-CASE OF Score
-    80 TO 100 : OUTPUT "High pass"
-    50 TO 79 : OUTPUT "Pass"
-    0 TO 49 : OUTPUT "Fail"
-    OTHERWISE OUTPUT "Invalid score"
-ENDCASE`,
-    expectedOutput: ['High pass'],
+FOR I ← 1 TO 3
+    OUTPUT I
+NEXT`,
+    expectedOutput: ['1', '2', '3'],
   },
   {
-    name: 'CASE first matching branch wins',
-    code: `DECLARE Score : INTEGER
-Score ← 85
-
-CASE OF Score
-    >= 50 : OUTPUT "Pass"
-    >= 80 : OUTPUT "High pass"
-ENDCASE`,
-    expectedOutput: ['Pass'],
+    name: 'Comment markers inside strings',
+    code: `OUTPUT "http://example.com"
+OUTPUT "A # B"`,
+    expectedOutput: ['http://example.com', 'A # B'],
   },
   {
-    name: 'CASE string equality labels',
-    code: `DECLARE Grade : STRING
-Grade ← "A"
-
-CASE OF Grade
-    = "A" : OUTPUT "Excellent"
-    <> "A" : OUTPUT "Not A"
-ENDCASE`,
-    expectedOutput: ['Excellent'],
-  },
-  {
-    name: 'CASE label type mismatch',
-    code: `DECLARE Score : INTEGER
-Score ← 80
-
-CASE OF Score
-    "A" : OUTPUT "Excellent"
-ENDCASE`,
+    name: 'Error help: undeclared variable',
+    code: `OUTPUT Score`,
     expectedOutput: [],
-    expectedErrors: ['Line 5: CASE label type STRING does not match CASE expression type INTEGER.'],
+    expectedErrors: [
+      "Line 1: Variable 'Score' has not been declared.\nPossible reason: You used Score before declaring it.\nSuggestion: Add DECLARE Score : INTEGER, DECLARE Score : STRING, or another suitable type before using it.",
+    ],
   },
   {
-    name: 'CASE invalid range order',
-    code: `DECLARE Score : INTEGER
-Score ← 80
-
-CASE OF Score
-    100 TO 80 : OUTPUT "Invalid range"
-ENDCASE`,
+    name: 'Error help: type mismatch',
+    code: `DECLARE Number : INTEGER
+Number = "Tom"`,
     expectedOutput: [],
-    expectedErrors: ['Line 5: CASE range lower bound cannot be greater than upper bound.'],
+    expectedErrors: [
+      "Line 2: Cannot assign STRING to INTEGER variable 'Number'.\nPossible reason: The value type does not match the declared variable type.\nSuggestion: Check the DECLARE line for Number, or change the assigned value to an INTEGER.",
+    ],
+  },
+  {
+    name: 'Error help: missing ENDIF',
+    code: `DECLARE Number : INTEGER
+Number = 5
+IF Number = 5
+    OUTPUT "Five"`,
+    expectedOutput: [],
+    expectedErrors: [
+      'Line 3: Missing ENDIF for IF statement.\nPossible reason: Every IF block must be closed.\nSuggestion: Add ENDIF after the statements inside the IF block.',
+    ],
+  },
+  {
+    name: 'Error help: array out of bounds',
+    code: `DECLARE Scores : ARRAY[1:3] OF INTEGER
+OUTPUT Scores[4]`,
+    expectedOutput: [],
+    expectedErrors: [
+      "Line 2: Array index 4 out of bounds for 'Scores'. Valid range is 1 to 3.\nPossible reason: You tried to access an array position outside its declared range.\nSuggestion: Check the ARRAY declaration and make sure the index is within the valid range.",
+    ],
+  },
+  {
+    name: 'Error help: division by zero',
+    code: `OUTPUT 10 / 0`,
+    expectedOutput: [],
+    expectedErrors: [
+      'Line 1: Division by zero.\nPossible reason: The right side of /, DIV, or MOD became 0.\nSuggestion: Check the value of the divisor before dividing.',
+    ],
   },
 ]

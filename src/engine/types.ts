@@ -1,4 +1,5 @@
-export type VariableType = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN'
+export type VariableType = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR'
+export type DataType = VariableType | string
 
 export type RuntimeValue = number | string | boolean
 
@@ -6,6 +7,7 @@ export type RunResult = {
   output: string[]
   errors: string[]
   variables: Record<string, unknown>
+  files: Record<string, string[]>
 }
 
 export type BinaryOperator =
@@ -37,6 +39,7 @@ export type TokenType =
   | 'leftBracket'
   | 'rightBracket'
   | 'comma'
+  | 'dot'
   | 'eof'
 
 export type Token = {
@@ -64,6 +67,12 @@ export type Expression =
       line: number
     }
   | {
+      kind: 'fieldAccess'
+      record: Expression
+      fieldName: string
+      line: number
+    }
+  | {
       kind: 'functionCall'
       name: string
       args: Expression[]
@@ -87,13 +96,13 @@ export type Statement =
   | {
       kind: 'declare'
       name: string
-      variableType: VariableType
+      variableType: DataType
       line: number
     }
   | {
       kind: 'declareArray'
       name: string
-      elementType: VariableType
+      elementType: DataType
       bounds: Array<{
         lower: number
         upper: number
@@ -154,6 +163,78 @@ export type Statement =
       otherwiseBranch?: Statement[]
       line: number
     }
+  | {
+      kind: 'procedure'
+      name: string
+      parameters: ProcedureParameter[]
+      body: Statement[]
+      line: number
+    }
+  | {
+      kind: 'function'
+      name: string
+      parameters: FunctionParameter[]
+      returnType: VariableType
+      body: Statement[]
+      line: number
+    }
+  | {
+      kind: 'call'
+      name: string
+      args: Expression[]
+      line: number
+    }
+  | {
+      kind: 'return'
+      expression: Expression
+      line: number
+    }
+  | {
+      kind: 'openFile'
+      fileName: string
+      mode: string
+      line: number
+    }
+  | {
+      kind: 'readFile'
+      fileName: string
+      target: AssignmentTarget
+      line: number
+    }
+  | {
+      kind: 'writeFile'
+      fileName: string
+      expression: Expression
+      line: number
+    }
+  | {
+      kind: 'closeFile'
+      fileName: string
+      line: number
+    }
+  | {
+      kind: 'typeDefinition'
+      name: string
+      fields: RecordFieldDefinition[]
+      line: number
+    }
+
+export type RecordFieldDefinition = {
+  name: string
+  type: VariableType
+  line: number
+}
+
+export type ProcedureParameter = {
+  name: string
+  type: VariableType
+  mode: 'BYVALUE' | 'BYREF'
+}
+
+export type FunctionParameter = {
+  name: string
+  type: VariableType
+}
 
 export type CaseBranch = {
   label: CaseLabel
@@ -181,6 +262,25 @@ export type CaseLabel =
     }
 
 export type AssignmentTarget =
+  | {
+      kind: 'variable'
+      name: string
+      line: number
+    }
+  | {
+      kind: 'arrayElement'
+      name: string
+      indices: Expression[]
+      line: number
+    }
+  | {
+      kind: 'recordField'
+      record: RecordFieldTargetBase
+      fieldName: string
+      line: number
+    }
+
+export type RecordFieldTargetBase =
   | {
       kind: 'variable'
       name: string
